@@ -31,3 +31,6 @@ image-selector.desktop
 *.orig
 *.bak
 .env
+
+# Original screenshots (JPEGs are committed instead)
+docs/*.png

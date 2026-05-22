@@ -2,6 +2,14 @@
 
 A keyboard-driven desktop tool for triaging and organizing photos. Load a source library and an album folder, browse images with arrow keys, and move or delete them without ever touching the mouse.
 
+![Triage view](docs/main.jpg)
+
+*Triage view — browse, move, and delete with the keyboard.*
+
+![Edit mode](docs/edit.jpg)
+
+*Edit mode — non-destructive adjustments, 20 film simulations, crop, and rotate.*
+
 ## Features
 
 - Two-panel layout: **Library** (source) and **Album** (destination) shown side by side as scrollable thumbnail strips
