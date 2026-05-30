@@ -23,6 +23,8 @@ image_selector/
 ├── thumbnail_cache.py       LRU-200 OpenCV thumbnail cache (used by preview)
 ├── edit_ops.py              Pure image editing functions + EditState dataclass
 ├── film_luts.py             Film simulation functions (Fujifilm-inspired)
+├── ai_edit.py               AI edit helpers — encoding, API call, response parsing (no Qt)
+├── mcp_server.py            MCP server for Claude Code (get_image_info, suggest_edits, apply_and_save)
 ├── app_controller.py        All user actions — mediates model ↔ view
 └── widgets/
     ├── main_window.py        MainWindow — layout, keyboard routing, menu
@@ -182,6 +184,37 @@ A modal `QDialog` opened by `EditPanel._on_manage_filters()`. Presents every fil
 A transparent `QWidget` child of `EditPreview`. Uses `WA_TranslucentBackground` to be truly transparent. Draws the dark mask as **four solid rectangles** around the crop rect (not `CompositionMode_Clear`) to avoid compositing artefacts on Linux.
 
 Crop coordinates are stored as **normalised floats (0–1)** of the image dimensions, independent of display scale. Pixel coordinates are computed from the normalised values only at save time.
+
+### `ai_edit.py`
+
+Pure Python module — no Qt, no app imports. Shared between the in-app AI button and `mcp_server.py`.
+
+Key functions:
+
+| Function | Purpose |
+|----------|---------|
+| `encode_for_api(img, max_side=768)` | Downscale + JPEG encode → base64 string |
+| `img_path_to_b64(path, max_side=768)` | Read from disk then encode |
+| `call_api(img_b64, prompt, api_key, model)` | Send image + prompt to Claude, return raw text |
+| `parse_edit_state(text)` | Strip fences, parse JSON, clamp all values to valid ranges |
+
+`SYSTEM_PROMPT` is a module-level constant that instructs Claude to return a bare JSON object matching `EditState` exactly. `call_api` uses `anthropic.Anthropic` imported lazily so the app starts normally even if the `anthropic` package is not installed.
+
+### `_AiWorker` (inside `edit_panel.py`)
+
+A `QThread` subclass that runs the AI call off the main thread. Emits `result_ready(dict)` on success and `error(str)` on any exception. `EditPanel` disables the Apply button while the worker runs and re-enables it on either signal.
+
+### `mcp_server.py`
+
+Standalone MCP server built with `mcp.server.fastmcp.FastMCP`. Imports `ai_edit` and `edit_ops` directly — no Qt, no running app instance required.
+
+| Tool | Description |
+|------|-------------|
+| `get_image_info(image_path)` | Returns width, height, file size, and a 400 px base64 thumbnail |
+| `suggest_edits(image_path, prompt)` | Calls `ai_edit.call_api` and returns the EditState JSON string |
+| `apply_and_save(image_path, state_json, output_path)` | Applies the pipeline at full resolution and saves atomically |
+
+`apply_and_save` uses the same tempfile + `shutil.move` + `os.utime` pattern as `AppController.save_edit` — the original is never touched until the write succeeds and timestamps are always preserved.
 
 ---
 

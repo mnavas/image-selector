@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+import os
+
+from PyQt6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -653,6 +656,41 @@ class FiltersPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# AI worker thread
+# ---------------------------------------------------------------------------
+
+class _AiWorker(QThread):
+    result_ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, img: np.ndarray, prompt: str,
+                 api_key: str = "",
+                 ollama_model: str = "",
+                 ollama_host: str = "http://localhost:11434"):
+        super().__init__()
+        self._img = img
+        self._prompt = prompt
+        self._api_key = api_key
+        self._ollama_model = ollama_model
+        self._ollama_host = ollama_host
+
+    def run(self) -> None:
+        try:
+            import ai_edit
+            b64 = ai_edit.encode_for_api(self._img)
+            if self._api_key:
+                raw = ai_edit.call_api(b64, self._prompt, self._api_key)
+            else:
+                raw = ai_edit.call_api_ollama(
+                    b64, self._prompt, self._ollama_model, self._ollama_host
+                )
+            state = ai_edit.parse_edit_state(raw)
+            self.result_ready.emit(state)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
 # EditPanel — the full-screen overlay
 # ---------------------------------------------------------------------------
 
@@ -674,6 +712,19 @@ class EditPanel(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(50)
         self._debounce.timeout.connect(self._do_update)
+
+        self._api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        self._ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self._ollama_model = os.environ.get("OLLAMA_MODEL", "gemma3n")
+        self._ai_worker: _AiWorker | None = None
+        self._ai_pre_state: dict | None = None  # snapshot taken just before AI applies
+
+        # Detect which backend is available
+        if self._api_key:
+            self._ai_backend = "anthropic"
+        else:
+            import ai_edit as _ai
+            self._ai_backend = "ollama" if _ai.ollama_is_running(self._ollama_host) else "none"
 
         self._build_ui()
 
@@ -698,6 +749,9 @@ class EditPanel(QWidget):
         self._crop_btn.setChecked(False)
         self._preview.stop_crop()
         self._filename_lbl.setText(entry.filename)
+        self._ai_pre_state = None
+        self._ai_status.setText("")
+        self._ai_undo_btn.hide()
 
         self._do_update()
 
@@ -822,8 +876,79 @@ class EditPanel(QWidget):
         self._filters.changed.connect(self._on_filter_changed)
         self._filters.manage_clicked.connect(self._on_manage_filters)
 
+        # AI edit section
+        ai_box = QGroupBox("AI EDIT")
+        ai_box.setStyleSheet(adj_box.styleSheet())
+        ai_layout = QVBoxLayout(ai_box)
+        ai_layout.setContentsMargins(8, 8, 8, 8)
+        ai_layout.setSpacing(6)
+
+        self._ai_prompt = QLineEdit()
+        self._ai_prompt.setPlaceholderText("describe the look you want…")
+        self._ai_prompt.setStyleSheet(
+            "QLineEdit { background: #2a2a2a; color: #ddd; border: 1px solid #444; "
+            "border-radius: 3px; padding: 4px 6px; font-size: 12px; }"
+            "QLineEdit:focus { border-color: #4a9eff; }"
+        )
+        self._ai_prompt.returnPressed.connect(self._on_ai_apply)
+
+        ai_btn_row = QWidget()
+        ai_btn_layout = QHBoxLayout(ai_btn_row)
+        ai_btn_layout.setContentsMargins(0, 0, 0, 0)
+        ai_btn_layout.setSpacing(6)
+
+        self._ai_btn = QPushButton("✨ Apply")
+        self._ai_btn.setStyleSheet(
+            "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+            "padding: 4px 10px; border-radius: 3px; font-size: 12px; }"
+            "QPushButton:hover { background-color: #383838; color: #ddd; }"
+            "QPushButton:pressed { background-color: #1a1a1a; }"
+            "QPushButton:disabled { color: #555; border-color: #333; }"
+        )
+        self._ai_btn.clicked.connect(self._on_ai_apply)
+
+        self._ai_undo_btn = QPushButton("↩ Undo AI")
+        self._ai_undo_btn.setStyleSheet(
+            "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+            "padding: 4px 10px; border-radius: 3px; font-size: 12px; }"
+            "QPushButton:hover { background-color: #383838; color: #ddd; }"
+            "QPushButton:pressed { background-color: #1a1a1a; }"
+        )
+        self._ai_undo_btn.clicked.connect(self._on_ai_undo)
+        self._ai_undo_btn.hide()
+
+        self._ai_status = QLabel("")
+        self._ai_status.setStyleSheet("color: #666; font-size: 11px;")
+        self._ai_status.setWordWrap(True)
+
+        if self._ai_backend == "anthropic":
+            backend_text = "via Claude (Anthropic)"
+            backend_color = "#555"
+        elif self._ai_backend == "ollama":
+            backend_text = f"via Ollama ({self._ollama_model})"
+            backend_color = "#555"
+        else:
+            backend_text = "No AI backend found — set ANTHROPIC_API_KEY or start Ollama"
+            backend_color = "#664"
+            self._ai_btn.setEnabled(False)
+            self._ai_btn.setToolTip(backend_text)
+
+        ai_backend_lbl = QLabel(backend_text)
+        ai_backend_lbl.setStyleSheet(f"color: {backend_color}; font-size: 10px; padding-bottom: 2px;")
+        ai_backend_lbl.setWordWrap(True)
+
+        ai_btn_layout.addWidget(self._ai_btn)
+        ai_btn_layout.addWidget(self._ai_undo_btn)
+        ai_btn_layout.addStretch()
+
+        ai_layout.addWidget(ai_backend_lbl)
+        ai_layout.addWidget(self._ai_prompt)
+        ai_layout.addWidget(ai_btn_row)
+        ai_layout.addWidget(self._ai_status)
+
         rl.addWidget(adj_box)
         rl.addWidget(filt_box)
+        rl.addWidget(ai_box)
         rl.addStretch()
 
         scroll.setWidget(scroll_content)
@@ -893,6 +1018,97 @@ class EditPanel(QWidget):
             cfg = Config.load()
             cfg.hidden_filters = list(hidden)
             cfg.save()
+
+    def _snapshot_state(self) -> dict:
+        """Capture current sliders + filter + rotation as a plain dict."""
+        adj = self._adjustments
+        return {
+            "brightness":  adj._sliders["brightness"].value(),
+            "contrast":    adj._sliders["contrast"].value(),
+            "exposure":    adj._sliders["exposure"].value(),   # stored ×10
+            "saturation":  adj._sliders["saturation"].value(),
+            "shadows":     adj._sliders["shadows"].value(),
+            "highlights":  adj._sliders["highlights"].value(),
+            "filter_name": self._state.filter_name,
+            "rotation":    self._state.rotation,
+        }
+
+    def _apply_state_dict(self, state: dict) -> None:
+        """Push a state dict (from snapshot or AI response) into sliders + filter."""
+        adj = self._adjustments
+        for slider in adj._sliders.values():
+            slider.blockSignals(True)
+
+        adj._sliders["brightness"].setValue(int(state["brightness"]))
+        adj._sliders["contrast"].setValue(int(state["contrast"]))
+        # exposure: AI sends float stops, snapshot stores raw ×10 int — handle both
+        exp_raw = state["exposure"]
+        adj._sliders["exposure"].setValue(
+            int(exp_raw * 10) if isinstance(exp_raw, float) and abs(exp_raw) <= 3.0
+            else int(exp_raw)
+        )
+        adj._sliders["saturation"].setValue(int(state["saturation"]))
+        adj._sliders["shadows"].setValue(int(state["shadows"]))
+        adj._sliders["highlights"].setValue(int(state["highlights"]))
+
+        for attr, lbl in adj._labels.items():
+            v = adj._sliders[attr].value()
+            lbl.setText(f"{v / 10.0:+.1f}" if attr == "exposure" else f"{v:+.0f}")
+
+        for slider in adj._sliders.values():
+            slider.blockSignals(False)
+
+        fname = state.get("filter_name", "original")
+        if fname in self._filters._radios:
+            self._filters._radios[fname].blockSignals(True)
+            self._filters._radios[fname].setChecked(True)
+            self._filters._radios[fname].blockSignals(False)
+        self._state.filter_name = fname
+        self._state.rotation = state.get("rotation", 0)
+        self._on_state_changed()
+
+    def _on_ai_apply(self) -> None:
+        if self._preview_img is None or self._ai_backend == "none":
+            return
+        prompt = self._ai_prompt.text().strip()
+        if not prompt:
+            return
+        self._ai_pre_state = self._snapshot_state()   # save before overwriting
+        self._ai_undo_btn.hide()
+        self._ai_btn.setEnabled(False)
+        self._ai_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._ai_status.setText("Thinking…")
+        self._ai_worker = _AiWorker(
+            self._preview_img, prompt,
+            api_key=self._api_key,
+            ollama_model=self._ollama_model,
+            ollama_host=self._ollama_host,
+        )
+        self._ai_worker.result_ready.connect(self._on_ai_result)
+        self._ai_worker.error.connect(self._on_ai_error)
+        self._ai_worker.start()
+
+    def _on_ai_result(self, state: dict) -> None:
+        self._apply_state_dict(state)
+        self._ai_btn.setEnabled(True)
+        self._ai_status.setStyleSheet("color: #5f5; font-size: 11px;")
+        self._ai_status.setText("Applied ✓")
+        self._ai_undo_btn.show()
+
+    def _on_ai_undo(self) -> None:
+        if self._ai_pre_state is None:
+            return
+        self._apply_state_dict(self._ai_pre_state)
+        self._ai_pre_state = None
+        self._ai_undo_btn.hide()
+        self._ai_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._ai_status.setText("Undone")
+
+    def _on_ai_error(self, message: str) -> None:
+        self._ai_btn.setEnabled(True)
+        self._ai_status.setStyleSheet("color: #f55; font-size: 11px;")
+        self._ai_status.setText(message)
+        self._ai_pre_state = None
 
     def _on_back(self) -> None:
         self.controller.close_edit_mode()

@@ -206,6 +206,48 @@ Click **Save As…** or press `Ctrl+S` in edit mode.
 
 ---
 
+## AI Edit
+
+The **AI EDIT** section is at the bottom of the right-hand panel in edit mode. Type a natural-language description of the look you want and press **✨ Apply** (or `Enter`).
+
+```
+┌────────────────────────────────────┐
+│  AI EDIT                           │
+│  ┌──────────────────────────────┐  │
+│  │ describe the look you want…  │  │
+│  └──────────────────────────────┘  │
+│  [✨ Apply]   Applied ✓             │
+└────────────────────────────────────┘
+```
+
+Claude analyses the image and the prompt together, then updates all sliders and the active filter automatically. You can still adjust everything manually afterwards before saving.
+
+### Setup
+
+The feature requires an Anthropic API key. Set it in your environment before launching the app:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+bash launch.sh
+```
+
+If the key is not set the **✨ Apply** button is disabled and shows a tooltip explaining what to do.
+
+### Example prompts
+
+| Prompt | What Claude might do |
+|--------|----------------------|
+| `too dark and flat` | Raise exposure and contrast |
+| `warm cinematic look` | Apply Eterna or Classic Neg, boost shadows |
+| `convert to black and white` | Apply Acros or Neopan 1600 |
+| `overexposed, fix it` | Lower exposure, recover highlights |
+| `documentary street feel` | Apply Classic Chrome, desaturate slightly |
+| `rotate left` | Set rotation to 270° |
+
+Prompts work best when they describe a mood, problem, or reference look. Claude reads the image content too — a flat hazy landscape and a flat indoor portrait will get different treatment even with the same prompt.
+
+---
+
 ## File Safety
 
 - Moves (`↑` / `↓`) preserve the original creation date using `os.utime`.

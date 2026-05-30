@@ -131,6 +131,54 @@ python main.py
 
 ---
 
+## AI Edit feature
+
+The **✨ AI Edit** button in edit mode requires an Anthropic API key. Without it the button is disabled and everything else works normally.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+bash launch.sh          # or python main.py
+```
+
+The key is never stored on disk — it is read from the environment at launch time.
+
+---
+
+## Claude Code MCP integration
+
+The included `mcp_server.py` lets Claude Code edit images directly from the terminal without opening the app.
+
+### Register the server
+
+```bash
+claude mcp add image-selector -- python /absolute/path/to/image-selector/mcp_server.py
+```
+
+The server also needs the API key in its environment:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Available tools
+
+| Tool | What it does |
+|------|-------------|
+| `get_image_info(image_path)` | Returns dimensions and a thumbnail for Claude to inspect |
+| `suggest_edits(image_path, prompt)` | Returns a JSON `EditState` based on the image and your prompt |
+| `apply_and_save(image_path, state_json, output_path)` | Applies the edits at full resolution and saves the result |
+
+### Example session
+
+```
+> analyse ~/Photos/DSC_0042.jpg — it looks flat and overexposed.
+  Save the result as ~/Photos/DSC_0042_edit.jpg
+```
+
+Claude Code will call `get_image_info`, then `suggest_edits`, show you the proposed values, then call `apply_and_save`. The original file is never modified.
+
+---
+
 ## Dependencies
 
 All Python dependencies are pinned in `requirements.txt`:
@@ -141,6 +189,8 @@ All Python dependencies are pinned in `requirements.txt`:
 | `opencv-python` | ≥ 4.9 | Image loading, editing, and saving |
 | `Pillow` | ≥ 10.0 | EXIF reading |
 | `send2trash` | ≥ 1.8 | Safe delete to system trash |
+| `anthropic` | ≥ 0.40 | Anthropic API client (AI Edit feature) |
+| `mcp` | ≥ 1.0 | MCP server SDK (Claude Code integration) |
 | `numpy` | (pulled by OpenCV) | Array operations in the edit pipeline |
 
 ---
