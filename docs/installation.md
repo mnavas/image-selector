@@ -133,14 +133,53 @@ python main.py
 
 ## AI Edit feature
 
-The **✨ AI Edit** button in edit mode requires an Anthropic API key. Without it the button is disabled and everything else works normally.
+The **✨ AI Edit** button works with either an Anthropic API key **or** a locally running Ollama instance. Everything else in the app works normally without either.
+
+### Option 1 — Anthropic API (Claude)
+
+Requires a paid API key from [console.anthropic.com](https://console.anthropic.com):
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-bash launch.sh          # or python main.py
+bash launch.sh
 ```
 
-The key is never stored on disk — it is read from the environment at launch time.
+Cost is roughly $0.01–0.02 per edit suggestion. The key is never stored on disk.
+
+### Option 2 — Ollama (free, local)
+
+Requires [Ollama](https://ollama.com) installed with a vision-capable model. No account or internet connection needed after the initial model download.
+
+**Install Ollama:**
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh   # Linux / macOS
+```
+
+Windows: download the installer from [ollama.com](https://ollama.com).
+
+**Pull a vision model:**
+
+```bash
+ollama pull gemma3n    # recommended — good quality, reasonable speed
+# alternatives: llava, moondream, llava-phi3
+```
+
+**Launch the app** — Ollama server is detected automatically:
+
+```bash
+bash launch.sh
+```
+
+Override the model or host if needed:
+
+```bash
+export OLLAMA_MODEL=llava
+export OLLAMA_HOST=http://localhost:11434
+bash launch.sh
+```
+
+If Ollama is running when the app starts, the AI Edit button is enabled with no further configuration.
 
 ---
 

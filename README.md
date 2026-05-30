@@ -19,6 +19,7 @@ A keyboard-driven desktop tool for triaging and organizing photos. Load a source
   - **20 Fujifilm-inspired film simulations**: Provia, Velvia, Astia, Classic Chrome, Classic Neg, Acros, Eterna, Sepia, Faded/Matte, Cross Process, Fortia SP, Neopan 1600, T64, Pro 800Z, Pro 400H, Pro 160C, Pro 160S, Superia 1600, Superia 400, Superia 100
   - **Auto adjustments**: Normalize (CLAHE), Auto Levels, Auto Tone, Auto White Balance
   - **Filter visibility manager** — hide filters you never use via the ⚙ Manage button; preference is remembered between sessions
+  - **AI Edit** — type a prompt ("warm cinematic look", "too dark fix it") and all sliders update automatically. Uses Claude (Anthropic API key) or a local **Ollama** vision model — no cloud account needed if Ollama is running
   - Interactive **crop tool** with aspect-ratio-locked drag handles and rule-of-thirds grid
   - Rotate left / right inside edit mode (non-destructive, applied at save time)
   - **Save As** dialog pre-filled with original filename; extension auto-inherited if omitted
@@ -83,6 +84,8 @@ image_selector/
 ├── thumbnail_cache.py       # LRU OpenCV thumbnail cache
 ├── edit_ops.py              # Pure OpenCV image editing functions + EditState
 ├── film_luts.py             # Fujifilm-inspired film simulation functions
+├── ai_edit.py               # AI edit helpers — encoding, API calls, response parsing
+├── mcp_server.py            # MCP server for Claude Code integration
 ├── widgets/
 │   ├── main_window.py       # Main window, keyboard handling, menus
 │   ├── preview_widget.py    # Zoomable/pannable image preview (QPainter)
@@ -91,19 +94,15 @@ image_selector/
 │   └── info_bar.py          # Filename / date / size / position bar
 ├── requirements.txt
 └── docs/
-    ├── requirements.md
+    ├── installation.md
+    ├── user-guide.md
+    ├── architecture.md
     └── versioning/
         ├── v0.0.1/
-        │   ├── analysis.md
-        │   ├── plan.md
-        │   └── changelog.md
-        └── v0.0.2/
-            ├── analysis.md
-            ├── plan.md
-            └── changelog.md
+        ├── v0.0.2/
+        └── v0.0.3/
 ```
 
 ## Roadmap
 
 - HEIC support (`pillow-heif`), RAW support (`rawpy`), batch editing
-- Claude Code MCP smart edit — AI-suggested `EditState` via compressed image, applied without any UI

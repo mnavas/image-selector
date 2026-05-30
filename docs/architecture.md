@@ -195,14 +195,23 @@ Key functions:
 |----------|---------|
 | `encode_for_api(img, max_side=768)` | Downscale + JPEG encode → base64 string |
 | `img_path_to_b64(path, max_side=768)` | Read from disk then encode |
-| `call_api(img_b64, prompt, api_key, model)` | Send image + prompt to Claude, return raw text |
+| `call_api(img_b64, prompt, api_key, model)` | Send image + prompt to Claude (Anthropic), return raw text |
+| `ollama_is_running(host)` | Returns `True` if Ollama is reachable at `host` (2 s timeout) |
+| `call_api_ollama(img_b64, prompt, model, host)` | Send image + prompt to a local Ollama vision model, return raw text |
 | `parse_edit_state(text)` | Strip fences, parse JSON, clamp all values to valid ranges |
 
-`SYSTEM_PROMPT` is a module-level constant that instructs Claude to return a bare JSON object matching `EditState` exactly. `call_api` uses `anthropic.Anthropic` imported lazily so the app starts normally even if the `anthropic` package is not installed.
+`SYSTEM_PROMPT` is a module-level constant shared by both backends. `call_api` imports `anthropic` lazily. `call_api_ollama` uses only `urllib.request` from the stdlib — no extra dependency.
 
 ### `_AiWorker` (inside `edit_panel.py`)
 
-A `QThread` subclass that runs the AI call off the main thread. Emits `result_ready(dict)` on success and `error(str)` on any exception. `EditPanel` disables the Apply button while the worker runs and re-enables it on either signal.
+A `QThread` subclass that runs the AI call off the main thread. Emits `result_ready(dict)` on success and `error(str)` on any exception. `EditPanel` disables the ✨ Apply button while the worker runs and re-enables it on either signal.
+
+**Backend detection** happens once at `EditPanel.__init__`:
+1. If `ANTHROPIC_API_KEY` is set → `_ai_backend = "anthropic"`
+2. Else if `ollama_is_running(host)` → `_ai_backend = "ollama"`
+3. Else → `_ai_backend = "none"` and the button is disabled
+
+The worker receives the backend choice and calls `call_api` or `call_api_ollama` accordingly. The Ollama model and host are read from `OLLAMA_MODEL` / `OLLAMA_HOST` environment variables, defaulting to `gemma3n` and `http://localhost:11434`.
 
 ### `mcp_server.py`
 

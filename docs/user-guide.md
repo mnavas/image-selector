@@ -216,26 +216,50 @@ The **AI EDIT** section is at the bottom of the right-hand panel in edit mode. T
 │  ┌──────────────────────────────┐  │
 │  │ describe the look you want…  │  │
 │  └──────────────────────────────┘  │
-│  [✨ Apply]   Applied ✓             │
+│  [✨ Apply]  [↩ Undo AI]            │
+│  Applied ✓                         │
 └────────────────────────────────────┘
 ```
 
-Claude analyses the image and the prompt together, then updates all sliders and the active filter automatically. You can still adjust everything manually afterwards before saving.
+The AI analyses the image and the prompt together, then updates all sliders and the active filter automatically. You can still adjust everything manually afterwards before saving.
 
-### Setup
+### Undoing an AI suggestion
 
-The feature requires an Anthropic API key. Set it in your environment before launching the app:
+After **✨ Apply** completes, an **↩ Undo AI** button appears next to it. Click it to restore the exact slider and filter state from before the AI ran. The button disappears after undoing or when you open a new image.
+
+### Setup — two options
+
+**Option 1 — Anthropic API (Claude):**
+
+Requires an API key from [console.anthropic.com](https://console.anthropic.com) (paid, ~$0.01–0.02 per edit):
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 bash launch.sh
 ```
 
-If the key is not set the **✨ Apply** button is disabled and shows a tooltip explaining what to do.
+**Option 2 — Ollama (free, runs locally):**
+
+If [Ollama](https://ollama.com) is installed and running with a vision model, the button enables automatically with no API key needed:
+
+```bash
+ollama pull gemma3n        # or any vision-capable model
+ollama serve               # if not already running
+bash launch.sh
+```
+
+The app checks for a running Ollama server at startup. If found, it uses `gemma3n` by default. Override with environment variables:
+
+```bash
+export OLLAMA_MODEL=llava   # use a different model
+export OLLAMA_HOST=http://localhost:11434  # default
+```
+
+If neither Anthropic key nor Ollama is available, the button is disabled with a tooltip explaining what to do.
 
 ### Example prompts
 
-| Prompt | What Claude might do |
+| Prompt | What the AI might do |
 |--------|----------------------|
 | `too dark and flat` | Raise exposure and contrast |
 | `warm cinematic look` | Apply Eterna or Classic Neg, boost shadows |
@@ -244,7 +268,7 @@ If the key is not set the **✨ Apply** button is disabled and shows a tooltip e
 | `documentary street feel` | Apply Classic Chrome, desaturate slightly |
 | `rotate left` | Set rotation to 270° |
 
-Prompts work best when they describe a mood, problem, or reference look. Claude reads the image content too — a flat hazy landscape and a flat indoor portrait will get different treatment even with the same prompt.
+Prompts work best when they describe a mood, problem, or reference look. The AI reads the image content too — a flat hazy landscape and a flat indoor portrait will get different treatment even with the same prompt.
 
 ---
 
