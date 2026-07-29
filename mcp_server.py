@@ -20,14 +20,13 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import cv2
-
 # Edit pipeline (pure NumPy/OpenCV, no Qt)
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
-from edit_ops import EditState, apply_pipeline
 import ai_edit
+import img_io
+from edit_ops import EditState, apply_pipeline
 
 from mcp.server.fastmcp import FastMCP
 
@@ -38,7 +37,7 @@ server = FastMCP("image-selector")
 # ---------------------------------------------------------------------------
 
 def _read_image(path: str):
-    img = cv2.imread(path)
+    img = img_io.imread(path)
     if img is None:
         raise FileNotFoundError(f"Cannot read image: {path}")
     return img
@@ -132,10 +131,10 @@ def apply_and_save(image_path: str, state_json: str, output_path: str) -> str:
     tmp_fd, tmp_name = tempfile.mkstemp(suffix=suffix, dir=out_path.parent)
     os.close(tmp_fd)
 
-    ok = cv2.imwrite(tmp_name, out)
+    ok = img_io.imwrite(tmp_name, out)
     if not ok:
         Path(tmp_name).unlink(missing_ok=True)
-        raise RuntimeError(f"cv2.imwrite failed — check the extension: {suffix}")
+        raise RuntimeError(f"Could not encode the image — check the extension: {suffix}")
 
     shutil.move(tmp_name, str(out_path))
     os.utime(out_path, (stat.st_atime, stat.st_mtime))

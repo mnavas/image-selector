@@ -14,23 +14,25 @@ A keyboard-driven desktop tool for triaging and organizing photos. Load a source
 
 - Two-panel layout: **Library** (source) and **Album** (destination) shown side by side as scrollable thumbnail strips
 - Large preview with **zoom** (mouse wheel, cursor-centred) and **pan** (left-drag); double-click to reset
+- **Multi-language interface** — English, Español, Português, and Deutsch. Auto-detected from the system locale on first launch; switchable anytime from the 🌐 button next to the folder controls
 - **Edit mode** — enter with `E`, full-screen non-destructive editor with live preview
   - Colour adjustments: Brightness, Contrast, Exposure, Saturation, Shadows, Highlights
   - **20 Fujifilm-inspired film simulations**: Provia, Velvia, Astia, Classic Chrome, Classic Neg, Acros, Eterna, Sepia, Faded/Matte, Cross Process, Fortia SP, Neopan 1600, T64, Pro 800Z, Pro 400H, Pro 160C, Pro 160S, Superia 1600, Superia 400, Superia 100
   - **Auto adjustments**: Normalize (CLAHE), Auto Levels, Auto Tone, Auto White Balance
   - **Filter visibility manager** — hide filters you never use via the ⚙ Manage button; preference is remembered between sessions
   - **AI Edit** — type a prompt ("warm cinematic look", "too dark fix it") and all sliders update automatically. Uses Claude (Anthropic API key) or a local **Ollama** vision model — no cloud account needed if Ollama is running
-  - Interactive **crop tool** with aspect-ratio-locked drag handles and rule-of-thirds grid
+  - Interactive **crop tool** — free-form drag handles (no locked aspect ratio) with rule-of-thirds grid; each handle moves only its own edge, and the view auto-resets to fit-window when you enter crop mode so what you see always matches what you're dragging
   - Rotate left / right inside edit mode (non-destructive, applied at save time)
   - **Save As** dialog pre-filled with original filename; extension auto-inherited if omitted
   - Original file creation date always preserved on save
-- Quick rotate 90° CW with `R` — saves in-place immediately
+- Quick rotate 90° CW with `R` — saves in-place immediately, atomically (temp file + rename), so a failed write never corrupts the original
+- Unicode-safe file paths — filenames with accents, ñ, or non-Latin characters load and save correctly on every platform
 - Keyboard-first workflow — navigate, move, and delete without leaving the keyboard
 - File creation dates preserved on every move and save
 - Deletes go to the system trash, not permanent deletion
 - Single-level undo for moves
 - Lazy EXIF loading — handles large card dumps without blocking the UI
-- Remembers last used folders and filter preferences between sessions
+- Remembers last used folders, language, and filter preferences between sessions
 
 ## Keyboard Shortcuts
 
@@ -79,6 +81,8 @@ image_selector/
 ├── main.py                  # Entry point
 ├── app_controller.py        # Action logic and UI coordination
 ├── config.py                # JSON config (~/.config/image_selector/)
+├── i18n.py                  # Static translations (en/es/pt/de) + locale detection
+├── img_io.py                # Unicode-safe imread/imwrite (accented filenames, ñ, CJK, ...)
 ├── image_collection.py      # Folder scanner and image list model
 ├── file_ops.py              # Move, trash, undo with timestamp preservation
 ├── thumbnail_cache.py       # LRU OpenCV thumbnail cache
@@ -106,3 +110,19 @@ image_selector/
 ## Roadmap
 
 - HEIC support (`pillow-heif`), RAW support (`rawpy`), batch editing
+
+## Changelog
+
+### v1.1.0
+
+**New features**
+
+- **Multi-language UI** — English, Español, Português, and Deutsch. The app detects the system locale on first launch and picks a matching language automatically (falling back to English for unsupported locales); it can be changed anytime from the 🌐 button next to the folder controls or from **File → Language**, and the choice is remembered between sessions.
+- **Unicode-safe file I/O** — image loading and saving now goes through `img_io.py`, which reads/writes via byte buffers (`np.fromfile` + `cv2.imdecode`/`imencode`) instead of handing raw paths to OpenCV. This fixes a real bug on Windows, where OpenCV silently fails to open or save files whose paths contain accented letters, ñ, or other non-ASCII characters.
+
+**Bug fixes**
+
+- **Crop tool was quietly recentring instead of resizing from one side.** Dragging a single edge handle (e.g. the right-middle handle) previously also shifted the opposite edge, making the crop shrink toward the centre no matter which handle you grabbed. The resize logic is now fully free-form: each handle moves only the edge(s) it controls, and the opposite edge/corner never moves. (This also removes the locked-aspect-ratio behaviour the crop tool had before — crop is now a free rectangle, like most photo editors.)
+- **Crop handles were unreliable to grab.** Hit-testing picked whichever handle came first in an internal list when handles were close together (small crop rects), so a click aimed at a mid-edge handle could silently grab a corner instead. It now always picks the handle actually closest to the click.
+- **Crop coordinates could desync from what was visible on screen.** If you zoomed or panned the preview before entering crop mode, the crop tool kept computing positions against the zoomed/panned view, so what you saw and what you were actually dragging didn't match. Entering crop mode now always resets the view to fit-window first.
+- **Quick rotate (`R` key) could corrupt the file on a failed write.** It used to write the rotated image directly over the original; if the write failed partway (e.g. disk full), the original could be left corrupted. It now writes to a temporary file first and renames it into place atomically, exactly like Save As already did — plus proper Unicode-safe I/O for the path.

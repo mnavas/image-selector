@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-import cv2
 import numpy as np
 
+import img_io
 from edit_ops import EditState, apply_pipeline, apply_rotate
 from file_ops import FileOps
 from image_collection import ImageCollection, ImageEntry, ensure_exif
@@ -103,7 +103,7 @@ class AppController:
         entry = self._active().current()
         if entry is None:
             return
-        img = cv2.imread(str(entry.path))
+        img = img_io.imread(entry.path)
         if img is None:
             return
         self._edit_entry = entry
@@ -140,7 +140,7 @@ class AppController:
             os.close(tmp_fd)
             tmp_path = Path(tmp_name)
 
-            ok = cv2.imwrite(str(tmp_path), out)
+            ok = img_io.imwrite(tmp_path, out)
             if not ok:
                 tmp_path.unlink(missing_ok=True)
                 raise RuntimeError(f"cv2 could not encode the image (check the file extension: {target_path.suffix})")
@@ -170,10 +170,11 @@ class AppController:
 
         except Exception as exc:
             from PyQt6.QtWidgets import QMessageBox
+            from i18n import tr
             QMessageBox.critical(
                 self._window,
-                "Save failed",
-                f"Could not save image:\n{exc}",
+                tr("save_failed_title"),
+                tr("save_failed_body").format(error=exc),
             )
             return
 
@@ -187,13 +188,39 @@ class AppController:
         entry = self._active().current()
         if entry is None:
             return
-        img = cv2.imread(str(entry.path))
+        img = img_io.imread(entry.path)
         if img is None:
             return
-        stat = os.stat(entry.path)
-        rotated = apply_rotate(img, 90)
-        cv2.imwrite(str(entry.path), rotated)
-        os.utime(entry.path, (stat.st_atime, stat.st_mtime))
+
+        import tempfile, shutil
+
+        try:
+            stat = os.stat(entry.path)
+            rotated = apply_rotate(img, 90)
+
+            tmp_fd, tmp_name = tempfile.mkstemp(
+                suffix=entry.path.suffix, dir=entry.path.parent
+            )
+            os.close(tmp_fd)
+            tmp_path = Path(tmp_name)
+
+            ok = img_io.imwrite(tmp_path, rotated)
+            if not ok:
+                tmp_path.unlink(missing_ok=True)
+                raise RuntimeError(f"Could not encode the image (check the file extension: {entry.path.suffix})")
+
+            shutil.move(str(tmp_path), str(entry.path))
+            os.utime(entry.path, (stat.st_atime, stat.st_mtime))
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+            from i18n import tr
+            QMessageBox.critical(
+                self._window,
+                tr("rotate_failed_title"),
+                tr("rotate_failed_body").format(error=exc),
+            )
+            return
+
         self._refresh_selection()
 
     def set_cursor_in(self, panel: Literal["library", "album"], index: int) -> None:

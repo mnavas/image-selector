@@ -6,6 +6,8 @@ from pathlib import Path
 import cv2
 from PyQt6.QtGui import QImage, QPixmap
 
+import img_io
+
 _MAX_ENTRIES = 200
 
 
@@ -30,7 +32,7 @@ class ThumbnailCache:
             del self._cache[k]
 
     def _load(self, path: Path, height: int) -> QPixmap:
-        img = cv2.imread(str(path))
+        img = img_io.imread(path)
         if img is None:
             return self._placeholder(height)
         h, w = img.shape[:2]

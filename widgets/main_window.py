@@ -4,12 +4,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenuBar,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -17,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import i18n
+from i18n import tr
 from image_collection import ImageEntry
 from widgets.edit_panel import EditPanel
 from widgets.info_bar import InfoBar
@@ -39,7 +43,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller: AppController, parent=None):
         super().__init__(parent)
         self.controller = controller
-        self.setWindowTitle("Image Selector")
+        self.setWindowTitle(tr("window_title"))
         self.resize(1280, 820)
         self.setStyleSheet("background-color: #111111; color: #dddddd;")
 
@@ -52,8 +56,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def set_folder_labels(self, library_path: str, album_path: str) -> None:
-        self._lib_label.setText(f"Library: {library_path}")
-        self._alb_label.setText(f"Album: {album_path}")
+        self._lib_label.setText(tr("library_label").format(path=library_path))
+        self._alb_label.setText(tr("album_label").format(path=album_path))
 
     # ------------------------------------------------------------------
     # UI construction
@@ -100,25 +104,32 @@ class MainWindow(QMainWindow):
             "QPushButton:pressed { background-color: #1a1a1a; }"
         )
 
-        self._lib_label = QLabel("Library: —")
+        self._lib_label = QLabel(tr("library_label").format(path="—"))
         self._lib_label.setStyleSheet(_lbl_style)
-        lib_btn = QPushButton("Change…")
+        lib_btn = QPushButton(tr("change_btn"))
         lib_btn.setStyleSheet(_chg_style)
-        lib_btn.setToolTip("Select a different library folder")
+        lib_btn.setToolTip(tr("tooltip_change_library"))
         lib_btn.clicked.connect(self._on_change_library)
 
-        self._alb_label = QLabel("Album: —")
+        self._alb_label = QLabel(tr("album_label").format(path="—"))
         self._alb_label.setStyleSheet(_lbl_style)
-        alb_btn = QPushButton("Change…")
+        alb_btn = QPushButton(tr("change_btn"))
         alb_btn.setStyleSheet(_chg_style)
-        alb_btn.setToolTip("Select a different album folder")
+        alb_btn.setToolTip(tr("tooltip_change_album"))
         alb_btn.clicked.connect(self._on_change_album)
+
+        lang_btn = QPushButton(f"🌐 {tr(f'lang_{i18n.get_language()}')}")
+        lang_btn.setStyleSheet(_chg_style)
+        lang_btn.setToolTip(tr("menu_language"))
+        lang_btn.clicked.connect(self._show_language_menu)
 
         fl.addWidget(self._lib_label)
         fl.addWidget(lib_btn)
         fl.addStretch()
         fl.addWidget(self._alb_label)
         fl.addWidget(alb_btn)
+        fl.addSpacing(12)
+        fl.addWidget(lang_btn)
         root.addWidget(folder_row)
 
         # Large preview
@@ -136,8 +147,8 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.library_strip = ThumbnailStrip()
         self.album_strip = ThumbnailStrip()
-        splitter.addWidget(self._labeled_strip("LIBRARY", self.library_strip))
-        splitter.addWidget(self._labeled_strip("ALBUM", self.album_strip))
+        splitter.addWidget(self._labeled_strip(tr("library_strip_title"), self.library_strip))
+        splitter.addWidget(self._labeled_strip(tr("album_strip_title"), self.album_strip))
         splitter.setSizes([640, 640])
         root.addWidget(splitter)
 
@@ -181,27 +192,62 @@ class MainWindow(QMainWindow):
             return b
 
         c = self.controller
-        layout.addWidget(btn("← Prev", lambda: c.navigate(-1), "Left arrow"))
-        layout.addWidget(btn("→ Next", lambda: c.navigate(+1), "Right arrow"))
+        layout.addWidget(btn(tr("btn_prev"), lambda: c.navigate(-1), tr("tooltip_left_arrow")))
+        layout.addWidget(btn(tr("btn_next"), lambda: c.navigate(+1), tr("tooltip_right_arrow")))
         layout.addStretch()
-        layout.addWidget(btn("↑ To Album", c.send_to_album, "Up arrow — move to album"))
-        layout.addWidget(btn("↓ To Library", c.send_to_library, "Down arrow — move to library"))
+        layout.addWidget(btn(tr("btn_to_album"), c.send_to_album, tr("tooltip_to_album")))
+        layout.addWidget(btn(tr("btn_to_library"), c.send_to_library, tr("tooltip_to_library")))
         layout.addStretch()
-        layout.addWidget(btn("✏ Edit", c.open_edit_mode, "E — open edit mode"))
-        layout.addWidget(btn("↻ Rotate", c.quick_rotate, "R — rotate 90° clockwise"))
-        layout.addWidget(btn("⟲ Undo", c.undo, "Ctrl+Z"))
-        layout.addWidget(btn("🗑 Delete", c.delete_current, "Del — send to trash"))
+        layout.addWidget(btn(tr("btn_edit"), c.open_edit_mode, tr("tooltip_edit")))
+        layout.addWidget(btn(tr("btn_rotate"), c.quick_rotate, tr("tooltip_rotate")))
+        layout.addWidget(btn(tr("btn_undo"), c.undo, tr("tooltip_undo")))
+        layout.addWidget(btn(tr("btn_delete"), c.delete_current, tr("tooltip_delete")))
         return row
 
     def _build_menu(self) -> None:
         mb = self.menuBar()
-        file_menu = mb.addMenu("File")
+        file_menu = mb.addMenu(tr("menu_file"))
 
-        change_lib = file_menu.addAction("Change Library Folder…")
+        change_lib = file_menu.addAction(tr("menu_change_library"))
         change_lib.triggered.connect(self._on_change_library)
 
-        change_alb = file_menu.addAction("Change Album Folder…")
+        change_alb = file_menu.addAction(tr("menu_change_album"))
         change_alb.triggered.connect(self._on_change_album)
+
+        lang_menu = file_menu.addMenu(tr("menu_language"))
+        self._populate_language_menu(lang_menu)
+
+    def _populate_language_menu(self, menu) -> None:
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        current = i18n.get_language()
+        for code in i18n.available_languages():
+            action = menu.addAction(tr(f"lang_{code}"))
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            group.addAction(action)
+            action.triggered.connect(lambda checked, c=code: self._on_change_language(c))
+
+    def _show_language_menu(self) -> None:
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        self._populate_language_menu(menu)
+        sender = self.sender()
+        pos = sender.mapToGlobal(sender.rect().bottomLeft())
+        menu.exec(pos)
+
+    def _on_change_language(self, code: str) -> None:
+        if code == i18n.get_language():
+            return
+        from config import Config
+        cfg = Config.load()
+        cfg.language = code
+        cfg.save()
+        QMessageBox.information(
+            self,
+            tr("menu_language"),
+            tr("restart_required"),
+        )
 
     # ------------------------------------------------------------------
     # Menu actions
@@ -209,23 +255,23 @@ class MainWindow(QMainWindow):
 
     def _on_change_library(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select Library Folder", self.controller.library.path or ""
+            self, tr("select_library_folder"), self.controller.library.path or ""
         )
         if not path:
             return
         self.controller.library.load(path)
-        self._lib_label.setText(f"Library: {path}")
+        self._lib_label.setText(tr("library_label").format(path=path))
         self.controller._refresh_collections()
         self._persist_paths()
 
     def _on_change_album(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select Album Folder", self.controller.album.path or ""
+            self, tr("select_album_folder"), self.controller.album.path or ""
         )
         if not path:
             return
         self.controller.album.load(path)
-        self._alb_label.setText(f"Album: {path}")
+        self._alb_label.setText(tr("album_label").format(path=path))
         self.controller._refresh_collections()
         self._persist_paths()
 

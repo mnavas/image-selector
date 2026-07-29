@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+import i18n
 from app_controller import AppController
 from config import Config
 from widgets.main_window import MainWindow
@@ -14,14 +15,14 @@ def _pick_folders(config: Config, parent=None) -> bool:
     """Prompt the user to select library and album folders. Returns False if cancelled."""
     lib = QFileDialog.getExistingDirectory(
         parent,
-        "Select Library Folder",
+        i18n.tr("select_library_folder"),
         config.library_path or str(Path.home()),
     )
     if not lib:
         return False
     alb = QFileDialog.getExistingDirectory(
         parent,
-        "Select Album Folder",
+        i18n.tr("select_album_folder"),
         config.album_path or lib,
     )
     if not alb:
@@ -47,6 +48,11 @@ def main() -> None:
     app.setStyle("Fusion")
 
     config = Config.load()
+
+    if not config.language:
+        config.language = i18n.detect_system_language()
+        config.save()
+    i18n.set_language(config.language)
 
     if not _validate_paths(config):
         if not _pick_folders(config):

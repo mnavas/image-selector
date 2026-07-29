@@ -8,6 +8,8 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QImage, QPainter, QPixmap
 from PyQt6.QtWidgets import QWidget
 
+import img_io
+
 
 def _ndarray_to_pixmap(img: np.ndarray) -> QPixmap:
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -37,7 +39,7 @@ class PreviewWidget(QWidget):
             self.reset_zoom()
             self.update()
             return
-        img = cv2.imread(str(path))
+        img = img_io.imread(path)
         if img is None:
             self._pixmap = None
             self.reset_zoom()

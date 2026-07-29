@@ -12,11 +12,13 @@ import re
 import cv2
 import numpy as np
 
+import img_io
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 
-EDIT_MODEL = "claude-opus-4-7"
+EDIT_MODEL = "claude-opus-4-8"
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -105,7 +107,7 @@ def encode_for_api(img: np.ndarray, max_side: int = 768) -> str:
 
 def img_path_to_b64(path: str, max_side: int = 768) -> str:
     """Read image from disk and return base64 JPEG string."""
-    img = cv2.imread(path)
+    img = img_io.imread(path)
     if img is None:
         raise FileNotFoundError(f"Cannot read image: {path}")
     return encode_for_api(img, max_side)

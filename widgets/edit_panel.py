@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from edit_ops import EditState, apply_pipeline
+from i18n import tr
 from widgets.preview_widget import PreviewWidget, _ndarray_to_pixmap
 
 if TYPE_CHECKING:
@@ -148,10 +149,20 @@ class CropOverlay(QWidget):
         }
 
     def _hit_handle(self, pos: QPointF) -> str | None:
+        """Return the closest handle within range, not just the first one
+        whose hit-circle contains pos — with small crop rects, adjacent
+        handles' hit-circles overlap, and picking "first in dict order"
+        means a corner silently steals clicks aimed at a mid-edge handle.
+        """
+        best_name = None
+        best_dist = _HANDLE_HIT
         for name, pt in self._handle_positions().items():
-            if (pos - pt).manhattanLength() <= _HANDLE_HIT:
-                return name
-        return None
+            dx, dy = pos.x() - pt.x(), pos.y() - pt.y()
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist <= best_dist:
+                best_dist = dist
+                best_name = name
+        return best_name
 
     # ------------------------------------------------------------------
     # Mouse events
@@ -196,19 +207,21 @@ class CropOverlay(QWidget):
         self.update()
 
     def _resize_with_handle(self, pos: QPointF, snap: tuple) -> None:
-        """Resize the crop rect from a handle drag, keeping aspect ratio locked."""
+        """Resize the crop rect from a handle drag. Free-form: each handle
+        only ever moves the edge(s) it sits on, anchored on the opposite
+        edge/corner. No aspect-ratio coupling between axes — a mid-edge
+        handle changes only its own axis; the other axis is left exactly
+        as it was.
+        """
         nx0, ny0, nw0, nh0 = snap
         pw, ph = self._img_rect.width(), self._img_rect.height()
         if pw == 0 or ph == 0:
             return
 
-        # Current mouse in normalised image coords
         mx = (pos.x() - self._img_rect.x()) / pw
         my = (pos.y() - self._img_rect.y()) / ph
 
         mode = self._drag_mode
-
-        # Determine which edges are being moved
         move_left = mode in ("tl", "bl", "l")
         move_right = mode in ("tr", "br", "r")
         move_top = mode in ("tl", "tr", "t")
@@ -217,46 +230,20 @@ class CropOverlay(QWidget):
         nx, ny, nw, nh = nx0, ny0, nw0, nh0
 
         if move_left:
-            new_nx = min(mx, nx0 + nw0 - 0.01)
-            new_nw = nw0 + (nx0 - new_nx)
-            nx, nw = new_nx, new_nw
-        if move_right:
-            new_nw = max(0.01, mx - nx0)
-            nw = new_nw
+            new_nx = max(0.0, min(mx, nx0 + nw0 - 0.01))
+            nw = (nx0 + nw0) - new_nx
+            nx = new_nx
+        elif move_right:
+            nw = max(0.01, min(mx, 1.0) - nx0)
+
         if move_top:
-            new_ny = min(my, ny0 + nh0 - 0.01)
-            new_nh = nh0 + (ny0 - new_ny)
-            ny, nh = new_ny, new_nh
-        if move_bottom:
-            new_nh = max(0.01, my - ny0)
-            nh = new_nh
+            new_ny = max(0.0, min(my, ny0 + nh0 - 0.01))
+            nh = (ny0 + nh0) - new_ny
+            ny = new_ny
+        elif move_bottom:
+            nh = max(0.01, min(my, 1.0) - ny0)
 
-        # Lock to original aspect ratio
-        # Determine the dominant change and adjust the other dimension
-        if mode in ("t", "b"):
-            # Height changed — adjust width to match aspect
-            nw = nh * self._aspect * (ph / pw)
-            # Keep horizontally centred
-            center_x = nx0 + nw0 / 2
-            nx = center_x - nw / 2
-        elif mode in ("l", "r"):
-            nh = nw * (pw / ph) / self._aspect
-            center_y = ny0 + nh0 / 2
-            ny = center_y - nh / 2
-        else:
-            # Corner drag — use the larger delta to drive both
-            delta_w = abs(nw - nw0)
-            delta_h = abs(nh - nh0)
-            if delta_w >= delta_h:
-                nh = nw * (pw / ph) / self._aspect
-                if move_top:
-                    ny = (ny0 + nh0) - nh
-            else:
-                nw = nh * self._aspect * (ph / pw)
-                if move_left:
-                    nx = (nx0 + nw0) - nw
-
-        # Clamp to image bounds
+        # Final safety clamp.
         nx = max(0.0, nx)
         ny = max(0.0, ny)
         nw = min(1.0 - nx, max(0.01, nw))
@@ -341,6 +328,14 @@ class EditPreview(PreviewWidget):
         self._crop_overlay.update_image_rect(self.image_rect())
 
     def start_crop(self, aspect: float) -> None:
+        # Any zoom/pan carried over from adjusting the preview would make
+        # image_rect() extend past the visible widget — the crop rect is
+        # computed correctly against the full image either way, but the
+        # user can only see (and therefore only accurately grab) whatever
+        # portion the zoom currently shows, causing every handle drag to
+        # look like it's grabbing the wrong point. Always show the full
+        # image, fit to the window, while cropping.
+        self.reset_zoom()
         self._crop_overlay.activate(aspect, self.image_rect())
         self._crop_overlay.setFocus()
 
@@ -356,12 +351,12 @@ class AdjustmentsPanel(QWidget):
     changed = pyqtSignal()
 
     _SLIDERS = [
-        ("Brightness", "brightness", -100, 100),
-        ("Contrast",   "contrast",   -100, 100),
-        ("Exposure",   "exposure",    -30,  30),   # ×0.1 → ±3.0 stops
-        ("Saturation", "saturation", -100, 100),
-        ("Shadows",    "shadows",    -100, 100),
-        ("Highlights", "highlights", -100, 100),
+        ("brightness", "brightness", -100, 100),
+        ("contrast",   "contrast",   -100, 100),
+        ("exposure",   "exposure",    -30,  30),   # ×0.1 → ±3.0 stops
+        ("saturation", "saturation", -100, 100),
+        ("shadows",    "shadows",    -100, 100),
+        ("highlights", "highlights", -100, 100),
     ]
 
     def __init__(self, parent=None):
@@ -373,13 +368,13 @@ class AdjustmentsPanel(QWidget):
         self._sliders: dict[str, QSlider] = {}
         self._labels: dict[str, QLabel] = {}
 
-        for display_name, attr, lo, hi in self._SLIDERS:
+        for label_key, attr, lo, hi in self._SLIDERS:
             row = QWidget()
             rl = QHBoxLayout(row)
             rl.setContentsMargins(0, 0, 0, 0)
             rl.setSpacing(6)
 
-            lbl = QLabel(display_name)
+            lbl = QLabel(tr(label_key))
             lbl.setFixedWidth(72)
             lbl.setStyleSheet("color: #aaa; font-size: 12px;")
 
@@ -414,7 +409,7 @@ class AdjustmentsPanel(QWidget):
             rl.addWidget(val_lbl)
             layout.addWidget(row)
 
-        reset_btn = QPushButton("Reset")
+        reset_btn = QPushButton(tr("reset_btn"))
         reset_btn.setStyleSheet(_SMALL_BTN)
         reset_btn.clicked.connect(self.reset)
         layout.addWidget(reset_btn)
@@ -452,7 +447,7 @@ class FilterManagerDialog(QDialog):
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Manage Filters")
+        self.setWindowTitle(tr("manage_filters_title"))
         self.setModal(True)
         self.setFixedWidth(320)
         self.setStyleSheet(
@@ -479,7 +474,7 @@ class FilterManagerDialog(QDialog):
         layout.setContentsMargins(16, 12, 16, 12)
 
         # Film simulations section
-        film_lbl = QLabel("FILM SIMULATIONS")
+        film_lbl = QLabel(tr("film_simulations_title"))
         film_lbl.setStyleSheet(_section)
         layout.addWidget(film_lbl)
 
@@ -492,7 +487,7 @@ class FilterManagerDialog(QDialog):
             layout.addWidget(cb)
 
         # Auto adjustments section
-        auto_lbl = QLabel("AUTO ADJUSTMENTS")
+        auto_lbl = QLabel(tr("auto_adjustments_title"))
         auto_lbl.setStyleSheet(_section)
         layout.addWidget(auto_lbl)
 
@@ -508,10 +503,10 @@ class FilterManagerDialog(QDialog):
         convenience = QWidget()
         conv_layout = QHBoxLayout(convenience)
         conv_layout.setContentsMargins(0, 0, 0, 0)
-        sel_all = QPushButton("Select All")
+        sel_all = QPushButton(tr("select_all_btn"))
         sel_all.setStyleSheet(_btn)
         sel_all.clicked.connect(lambda: [cb.setChecked(True) for cb in self._checks.values()])
-        clr_all = QPushButton("Clear All")
+        clr_all = QPushButton(tr("clear_all_btn"))
         clr_all.setStyleSheet(_btn)
         clr_all.clicked.connect(lambda: [cb.setChecked(False) for cb in self._checks.values()])
         conv_layout.addWidget(sel_all)
@@ -525,10 +520,10 @@ class FilterManagerDialog(QDialog):
         btn_row = QWidget()
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(tr("cancel_btn"))
         cancel_btn.setStyleSheet(_btn)
         cancel_btn.clicked.connect(self.reject)
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(tr("ok_btn"))
         ok_btn.setStyleSheet(_ok)
         ok_btn.clicked.connect(self.accept)
         ok_btn.setDefault(True)
@@ -550,34 +545,34 @@ class FiltersPanel(QWidget):
     manage_clicked = pyqtSignal()
 
     _FILM_FILTERS = [
-        ("original",      "Original"),
-        ("provia",        "Provia"),
-        ("velvia",        "Velvia"),
-        ("astia",         "Astia"),
-        ("classic_chrome","Classic Chrome"),
-        ("classic_neg",   "Classic Neg"),
-        ("acros",         "Acros"),
-        ("eterna",        "Eterna"),
-        ("sepia",         "Sepia"),
-        ("faded",         "Faded / Matte"),
-        ("cross_process", "Cross Process"),
-        ("fortia_sp",     "Fortia SP"),
-        ("neopan_1600",   "Neopan 1600"),
-        ("t64",           "T64 (Tungsten)"),
-        ("pro_800z",      "Pro 800Z"),
-        ("pro_400h",      "Pro 400H"),
-        ("pro_160c",      "Pro 160C"),
-        ("pro_160s",      "Pro 160S"),
-        ("superia_1600",  "Superia 1600"),
-        ("superia_400",   "Superia 400"),
-        ("superia_100",   "Superia 100"),
+        ("original",      tr("filter_original")),
+        ("provia",        tr("filter_provia")),
+        ("velvia",        tr("filter_velvia")),
+        ("astia",         tr("filter_astia")),
+        ("classic_chrome",tr("filter_classic_chrome")),
+        ("classic_neg",   tr("filter_classic_neg")),
+        ("acros",         tr("filter_acros")),
+        ("eterna",        tr("filter_eterna")),
+        ("sepia",         tr("filter_sepia")),
+        ("faded",         tr("filter_faded")),
+        ("cross_process", tr("filter_cross_process")),
+        ("fortia_sp",     tr("filter_fortia_sp")),
+        ("neopan_1600",   tr("filter_neopan_1600")),
+        ("t64",           tr("filter_t64")),
+        ("pro_800z",      tr("filter_pro_800z")),
+        ("pro_400h",      tr("filter_pro_400h")),
+        ("pro_160c",      tr("filter_pro_160c")),
+        ("pro_160s",      tr("filter_pro_160s")),
+        ("superia_1600",  tr("filter_superia_1600")),
+        ("superia_400",   tr("filter_superia_400")),
+        ("superia_100",   tr("filter_superia_100")),
     ]
 
     _AUTO_FILTERS = [
-        ("normalize",   "Normalize (CLAHE)"),
-        ("auto_levels", "Auto Levels"),
-        ("auto_tone",   "Auto Tone"),
-        ("auto_wb",     "Auto White Balance"),
+        ("normalize",   tr("filter_normalize")),
+        ("auto_levels", tr("filter_auto_levels")),
+        ("auto_tone",   tr("filter_auto_tone")),
+        ("auto_wb",     tr("filter_auto_wb")),
     ]
 
     def __init__(self, parent=None):
@@ -594,7 +589,7 @@ class FiltersPanel(QWidget):
         _section_style = "color: #666; font-size: 10px; padding-top: 6px; padding-left: 2px;"
 
         # "⚙ Manage" button at top
-        manage_btn = QPushButton("⚙ Manage")
+        manage_btn = QPushButton(tr("manage_btn"))
         manage_btn.setStyleSheet(_SMALL_BTN)
         manage_btn.setFixedHeight(24)
         manage_btn.clicked.connect(self.manage_clicked.emit)
@@ -609,7 +604,7 @@ class FiltersPanel(QWidget):
             layout.addWidget(rb)
             rb.toggled.connect(lambda checked, k=key: self.changed.emit(k) if checked else None)
 
-        self._auto_sep = QLabel("AUTO ADJUSTMENTS")
+        self._auto_sep = QLabel(tr("auto_adjustments_title"))
         self._auto_sep.setStyleSheet(_section_style)
         layout.addWidget(self._auto_sep)
 
@@ -771,19 +766,19 @@ class EditPanel(QWidget):
         hl = QHBoxLayout(header)
         hl.setContentsMargins(8, 0, 8, 0)
 
-        back_btn = QPushButton("← Back")
+        back_btn = QPushButton(tr("back_btn"))
         back_btn.setStyleSheet(_SMALL_BTN)
         back_btn.clicked.connect(self._on_back)
 
         self._filename_lbl = QLabel("")
         self._filename_lbl.setStyleSheet("color: #ccc; font-size: 13px;")
 
-        self._crop_btn = QPushButton("Crop")
+        self._crop_btn = QPushButton(tr("crop_btn"))
         self._crop_btn.setCheckable(True)
         self._crop_btn.setStyleSheet(_SMALL_BTN)
         self._crop_btn.toggled.connect(self._on_crop_toggled)
 
-        self._apply_crop_btn = QPushButton("✓ Apply Crop")
+        self._apply_crop_btn = QPushButton(tr("apply_crop_btn"))
         self._apply_crop_btn.setStyleSheet(
             "QPushButton { background-color: #1e4a1e; color: #8fdf8f; border: 1px solid #3a7a3a; "
             "padding: 3px 10px; border-radius: 3px; font-size: 12px; }"
@@ -793,17 +788,17 @@ class EditPanel(QWidget):
         self._apply_crop_btn.hide()
         self._apply_crop_btn.clicked.connect(self._commit_crop)
 
-        rot_l_btn = QPushButton("↺ Rotate L")
+        rot_l_btn = QPushButton(tr("rotate_left_btn"))
         rot_l_btn.setStyleSheet(_SMALL_BTN)
-        rot_l_btn.setToolTip("Rotate 90° counter-clockwise")
+        rot_l_btn.setToolTip(tr("tooltip_rotate_left"))
         rot_l_btn.clicked.connect(self._rotate_left)
 
-        rot_r_btn = QPushButton("↻ Rotate R")
+        rot_r_btn = QPushButton(tr("rotate_right_btn"))
         rot_r_btn.setStyleSheet(_SMALL_BTN)
-        rot_r_btn.setToolTip("Rotate 90° clockwise")
+        rot_r_btn.setToolTip(tr("tooltip_rotate_right"))
         rot_r_btn.clicked.connect(self._rotate_right)
 
-        save_btn = QPushButton("Save As…")
+        save_btn = QPushButton(tr("save_as_btn"))
         save_btn.setStyleSheet(_BTN_STYLE)
         save_btn.clicked.connect(self._do_save)
 
@@ -856,7 +851,7 @@ class EditPanel(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
 
-        adj_box = QGroupBox("ADJUSTMENTS")
+        adj_box = QGroupBox(tr("adjustments_title"))
         adj_box.setStyleSheet(
             "QGroupBox { color: #777; font-size: 10px; border: none; margin-top: 8px; padding-top: 4px; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 8px; }"
@@ -867,7 +862,7 @@ class EditPanel(QWidget):
         adj_layout.addWidget(self._adjustments)
         self._adjustments.changed.connect(self._on_state_changed)
 
-        filt_box = QGroupBox("FILTERS")
+        filt_box = QGroupBox(tr("filters_title"))
         filt_box.setStyleSheet(adj_box.styleSheet())
         filt_layout = QVBoxLayout(filt_box)
         filt_layout.setContentsMargins(0, 0, 0, 0)
@@ -877,14 +872,14 @@ class EditPanel(QWidget):
         self._filters.manage_clicked.connect(self._on_manage_filters)
 
         # AI edit section
-        ai_box = QGroupBox("AI EDIT")
+        ai_box = QGroupBox(tr("ai_edit_title"))
         ai_box.setStyleSheet(adj_box.styleSheet())
         ai_layout = QVBoxLayout(ai_box)
         ai_layout.setContentsMargins(8, 8, 8, 8)
         ai_layout.setSpacing(6)
 
         self._ai_prompt = QLineEdit()
-        self._ai_prompt.setPlaceholderText("describe the look you want…")
+        self._ai_prompt.setPlaceholderText(tr("ai_prompt_placeholder"))
         self._ai_prompt.setStyleSheet(
             "QLineEdit { background: #2a2a2a; color: #ddd; border: 1px solid #444; "
             "border-radius: 3px; padding: 4px 6px; font-size: 12px; }"
@@ -897,7 +892,7 @@ class EditPanel(QWidget):
         ai_btn_layout.setContentsMargins(0, 0, 0, 0)
         ai_btn_layout.setSpacing(6)
 
-        self._ai_btn = QPushButton("✨ Apply")
+        self._ai_btn = QPushButton(tr("ai_apply_btn"))
         self._ai_btn.setStyleSheet(
             "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
             "padding: 4px 10px; border-radius: 3px; font-size: 12px; }"
@@ -907,7 +902,7 @@ class EditPanel(QWidget):
         )
         self._ai_btn.clicked.connect(self._on_ai_apply)
 
-        self._ai_undo_btn = QPushButton("↩ Undo AI")
+        self._ai_undo_btn = QPushButton(tr("ai_undo_btn"))
         self._ai_undo_btn.setStyleSheet(
             "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
             "padding: 4px 10px; border-radius: 3px; font-size: 12px; }"
@@ -922,13 +917,13 @@ class EditPanel(QWidget):
         self._ai_status.setWordWrap(True)
 
         if self._ai_backend == "anthropic":
-            backend_text = "via Claude (Anthropic)"
+            backend_text = tr("ai_backend_anthropic")
             backend_color = "#555"
         elif self._ai_backend == "ollama":
-            backend_text = f"via Ollama ({self._ollama_model})"
+            backend_text = tr("ai_backend_ollama").format(model=self._ollama_model)
             backend_color = "#555"
         else:
-            backend_text = "No AI backend found — set ANTHROPIC_API_KEY or start Ollama"
+            backend_text = tr("ai_backend_none")
             backend_color = "#664"
             self._ai_btn.setEnabled(False)
             self._ai_btn.setToolTip(backend_text)
@@ -1077,7 +1072,7 @@ class EditPanel(QWidget):
         self._ai_undo_btn.hide()
         self._ai_btn.setEnabled(False)
         self._ai_status.setStyleSheet("color: #888; font-size: 11px;")
-        self._ai_status.setText("Thinking…")
+        self._ai_status.setText(tr("ai_thinking"))
         self._ai_worker = _AiWorker(
             self._preview_img, prompt,
             api_key=self._api_key,
@@ -1092,7 +1087,7 @@ class EditPanel(QWidget):
         self._apply_state_dict(state)
         self._ai_btn.setEnabled(True)
         self._ai_status.setStyleSheet("color: #5f5; font-size: 11px;")
-        self._ai_status.setText("Applied ✓")
+        self._ai_status.setText(tr("ai_applied"))
         self._ai_undo_btn.show()
 
     def _on_ai_undo(self) -> None:
@@ -1102,7 +1097,7 @@ class EditPanel(QWidget):
         self._ai_pre_state = None
         self._ai_undo_btn.hide()
         self._ai_status.setStyleSheet("color: #888; font-size: 11px;")
-        self._ai_status.setText("Undone")
+        self._ai_status.setText(tr("ai_undone"))
 
     def _on_ai_error(self, message: str) -> None:
         self._ai_btn.setEnabled(True)
@@ -1134,9 +1129,9 @@ class EditPanel(QWidget):
         default_path = str(self._entry.path)
         target, _ = QFileDialog.getSaveFileName(
             self,
-            "Save As",
+            tr("save_as_title"),
             default_path,
-            "Images (*.jpg *.jpeg *.png *.tiff *.tif)",
+            tr("images_filter"),
         )
         if not target:
             return
