@@ -207,17 +207,17 @@ class CropOverlay(QWidget):
         self.update()
 
     def _resize_with_handle(self, pos: QPointF, snap: tuple) -> None:
-        """Resize the crop rect from a handle drag. Free-form: each handle
-        only ever moves the edge(s) it sits on, anchored on the opposite
-        edge/corner. No aspect-ratio coupling between axes — a mid-edge
-        handle changes only its own axis; the other axis is left exactly
-        as it was.
+        """Resize the crop rect from a handle drag, keeping aspect ratio locked
+        to the original image. A mid-edge handle drives one axis and the other
+        follows to preserve the ratio (staying centred on the fixed axis); a
+        corner drag is driven by whichever axis moved most.
         """
         nx0, ny0, nw0, nh0 = snap
         pw, ph = self._img_rect.width(), self._img_rect.height()
         if pw == 0 or ph == 0:
             return
 
+        # Current mouse in normalised image coords
         mx = (pos.x() - self._img_rect.x()) / pw
         my = (pos.y() - self._img_rect.y()) / ph
 
@@ -230,20 +230,42 @@ class CropOverlay(QWidget):
         nx, ny, nw, nh = nx0, ny0, nw0, nh0
 
         if move_left:
-            new_nx = max(0.0, min(mx, nx0 + nw0 - 0.01))
+            new_nx = min(mx, nx0 + nw0 - 0.01)
             nw = (nx0 + nw0) - new_nx
             nx = new_nx
-        elif move_right:
-            nw = max(0.01, min(mx, 1.0) - nx0)
-
+        if move_right:
+            nw = max(0.01, mx - nx0)
         if move_top:
-            new_ny = max(0.0, min(my, ny0 + nh0 - 0.01))
+            new_ny = min(my, ny0 + nh0 - 0.01)
             nh = (ny0 + nh0) - new_ny
             ny = new_ny
-        elif move_bottom:
-            nh = max(0.01, min(my, 1.0) - ny0)
+        if move_bottom:
+            nh = max(0.01, my - ny0)
 
-        # Final safety clamp.
+        # Lock to original aspect ratio: adjust the passive dimension to match.
+        if mode in ("t", "b"):
+            # Height changed — width follows, kept horizontally centred.
+            nw = nh * self._aspect * (ph / pw)
+            center_x = nx0 + nw0 / 2
+            nx = center_x - nw / 2
+        elif mode in ("l", "r"):
+            nh = nw * (pw / ph) / self._aspect
+            center_y = ny0 + nh0 / 2
+            ny = center_y - nh / 2
+        else:
+            # Corner drag — use the larger delta to drive both dimensions.
+            delta_w = abs(nw - nw0)
+            delta_h = abs(nh - nh0)
+            if delta_w >= delta_h:
+                nh = nw * (pw / ph) / self._aspect
+                if move_top:
+                    ny = (ny0 + nh0) - nh
+            else:
+                nw = nh * self._aspect * (ph / pw)
+                if move_left:
+                    nx = (nx0 + nw0) - nw
+
+        # Clamp to image bounds
         nx = max(0.0, nx)
         ny = max(0.0, ny)
         nw = min(1.0 - nx, max(0.01, nw))
