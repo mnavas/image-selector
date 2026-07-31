@@ -13,6 +13,7 @@ class Config:
     album_path: str = ""
     thumb_height: int = 120
     hidden_filters: list = field(default_factory=list)
+    language: str = ""   # "" until first launch picks one from the system locale
 
     @staticmethod
     def load() -> "Config":
@@ -24,6 +25,7 @@ class Config:
                     album_path=data.get("album_path", ""),
                     thumb_height=data.get("thumb_height", 120),
                     hidden_filters=data.get("hidden_filters", []),
+                    language=data.get("language", ""),
                 )
             except Exception:
                 pass
@@ -38,6 +40,7 @@ class Config:
                     "album_path": self.album_path,
                     "thumb_height": self.thumb_height,
                     "hidden_filters": self.hidden_filters,
+                    "language": self.language,
                 },
                 indent=2,
             )
