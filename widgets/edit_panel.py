@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QGroupBox,
@@ -49,6 +50,13 @@ _SMALL_BTN = (
     "QPushButton:hover { background-color: #383838; }"
     "QPushButton:pressed { background-color: #1a1a1a; }"
     "QPushButton:checked { background-color: #1e3a5f; border-color: #4a9eff; color: #fff; }"
+)
+_SMALL_COMBO = (
+    "QComboBox { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+    "padding: 3px 8px; border-radius: 3px; font-size: 12px; }"
+    "QComboBox:hover { background-color: #383838; }"
+    "QComboBox QAbstractItemView { background-color: #2a2a2a; color: #ddd; "
+    "selection-background-color: #1e3a5f; }"
 )
 
 _PREVIEW_LONG_SIDE = 1600
@@ -102,8 +110,20 @@ class CropOverlay(QWidget):
         self._active = True
         self._aspect = aspect
         self._img_rect = img_rect
-        # Reset to full image with correct aspect
-        self._nx, self._ny, self._nw, self._nh = 0.0, 0.0, 1.0, 1.0
+        # Start with the largest centred rect that matches the target aspect.
+        # aspect is the desired pixel w/h; in normalised image coords the
+        # width/height ratio is aspect * (ph / pw).
+        pw, ph = img_rect.width(), img_rect.height()
+        if pw > 0 and ph > 0:
+            ratio_norm = aspect * ph / pw
+            if ratio_norm <= 1.0:
+                nw, nh = ratio_norm, 1.0
+            else:
+                nw, nh = 1.0, 1.0 / ratio_norm
+            self._nx, self._ny = (1.0 - nw) / 2, (1.0 - nh) / 2
+            self._nw, self._nh = nw, nh
+        else:
+            self._nx, self._ny, self._nw, self._nh = 0.0, 0.0, 1.0, 1.0
         self.show()
         self.update()
 
@@ -712,6 +732,15 @@ class _AiWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class EditPanel(QWidget):
+    # Crop aspect presets shown in the ratio combo. Value is the desired
+    # pixel w/h; None means "follow the original image's aspect ratio".
+    # 4R is the standard 4×6" print (3:2), landscape and portrait.
+    _CROP_RATIOS = [
+        ("crop_ratio_original", None),
+        ("crop_ratio_4r_land", 3 / 2),
+        ("crop_ratio_4r_port", 2 / 3),
+    ]
+
     def __init__(self, controller: AppController, parent: QWidget | None = None):
         super().__init__(parent)
         self.controller = controller
@@ -800,6 +829,13 @@ class EditPanel(QWidget):
         self._crop_btn.setStyleSheet(_SMALL_BTN)
         self._crop_btn.toggled.connect(self._on_crop_toggled)
 
+        self._crop_ratio_combo = QComboBox()
+        self._crop_ratio_combo.setStyleSheet(_SMALL_COMBO)
+        self._crop_ratio_combo.setToolTip(tr("tooltip_crop_ratio"))
+        for label_key, _ in self._CROP_RATIOS:
+            self._crop_ratio_combo.addItem(tr(label_key))
+        self._crop_ratio_combo.currentIndexChanged.connect(self._on_crop_ratio_changed)
+
         self._apply_crop_btn = QPushButton(tr("apply_crop_btn"))
         self._apply_crop_btn.setStyleSheet(
             "QPushButton { background-color: #1e4a1e; color: #8fdf8f; border: 1px solid #3a7a3a; "
@@ -833,6 +869,8 @@ class EditPanel(QWidget):
         hl.addWidget(rot_r_btn)
         hl.addSpacing(8)
         hl.addWidget(self._crop_btn)
+        hl.addSpacing(4)
+        hl.addWidget(self._crop_ratio_combo)
         hl.addSpacing(4)
         hl.addWidget(self._apply_crop_btn)
         hl.addSpacing(8)
@@ -1000,16 +1038,28 @@ class EditPanel(QWidget):
         self._state.rotation = (self._state.rotation + 90) % 360
         self._debounce.start()
 
+    def _selected_crop_aspect(self) -> float:
+        """Desired crop aspect (pixel w/h) for the current combo selection."""
+        _, value = self._CROP_RATIOS[self._crop_ratio_combo.currentIndex()]
+        if value is not None:
+            return value
+        h, w = self._original.shape[:2]
+        return w / h
+
     def _on_crop_toggled(self, checked: bool) -> None:
         if checked and self._original is not None:
-            h, w = self._original.shape[:2]
-            self._preview.start_crop(w / h)
+            self._preview.start_crop(self._selected_crop_aspect())
             self._crop_active = True
             self._apply_crop_btn.show()
         else:
             self._preview.stop_crop()
             self._crop_active = False
             self._apply_crop_btn.hide()
+
+    def _on_crop_ratio_changed(self, _index: int) -> None:
+        # Restart the overlay with the new target ratio if we're mid-crop.
+        if self._crop_active and self._original is not None:
+            self._preview.start_crop(self._selected_crop_aspect())
 
     def _commit_crop(self) -> None:
         """Called by the Apply Crop button — reads current overlay state and commits."""
