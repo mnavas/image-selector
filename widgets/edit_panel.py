@@ -734,11 +734,13 @@ class _AiWorker(QThread):
 class EditPanel(QWidget):
     # Crop aspect presets shown in the ratio combo. Value is the desired
     # pixel w/h; None means "follow the original image's aspect ratio".
-    # 4R is the standard 4×6" print (3:2), landscape and portrait.
+    # 4R is the standard 4×6" print (3:2); Instax Mini's image area is ~4:3.
     _CROP_RATIOS = [
         ("crop_ratio_original", None),
         ("crop_ratio_4r_land", 3 / 2),
         ("crop_ratio_4r_port", 2 / 3),
+        ("crop_ratio_instax_land", 4 / 3),
+        ("crop_ratio_instax_port", 3 / 4),
     ]
 
     def __init__(self, controller: AppController, parent: QWidget | None = None):
