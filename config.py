@@ -14,6 +14,7 @@ class Config:
     thumb_height: int = 120
     hidden_filters: list = field(default_factory=list)
     language: str = ""   # "" until first launch picks one from the system locale
+    copy_when_moving: bool = False   # when True, To Album/To Library copy instead of move
 
     @staticmethod
     def load() -> "Config":
@@ -26,6 +27,7 @@ class Config:
                     thumb_height=data.get("thumb_height", 120),
                     hidden_filters=data.get("hidden_filters", []),
                     language=data.get("language", ""),
+                    copy_when_moving=data.get("copy_when_moving", False),
                 )
             except Exception:
                 pass
@@ -41,6 +43,7 @@ class Config:
                     "thumb_height": self.thumb_height,
                     "hidden_filters": self.hidden_filters,
                     "language": self.language,
+                    "copy_when_moving": self.copy_when_moving,
                 },
                 indent=2,
             )

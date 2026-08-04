@@ -21,6 +21,7 @@ class AppController:
         self.album = ImageCollection()
         self.focus: Literal["library", "album"] = "library"
         self.ops = FileOps()
+        self.copy_mode = False   # when True, send_to_* copies instead of moving
         self._window: MainWindow | None = None
         self._edit_entry: ImageEntry | None = None
         self._edit_original: np.ndarray | None = None
@@ -42,14 +43,18 @@ class AppController:
         entry = self.library.current()
         assert entry is not None
         idx = self.library.cursor
-        new_path = self.ops.move(entry.path, Path(self.album.path))
+        if self.copy_mode:
+            new_path = self.ops.copy(entry.path, Path(self.album.path))
+        else:
+            new_path = self.ops.move(entry.path, Path(self.album.path))
         new_entry = ImageEntry(
             path=new_path,
             filename=new_path.name,
             exif_date=entry.exif_date,
             file_size=entry.file_size,
         )
-        self.library.remove(idx)
+        if not self.copy_mode:
+            self.library.remove(idx)
         self.album.add(new_entry)
         self._refresh_collections()
 
@@ -59,14 +64,18 @@ class AppController:
         entry = self.album.current()
         assert entry is not None
         idx = self.album.cursor
-        new_path = self.ops.move(entry.path, Path(self.library.path))
+        if self.copy_mode:
+            new_path = self.ops.copy(entry.path, Path(self.library.path))
+        else:
+            new_path = self.ops.move(entry.path, Path(self.library.path))
         new_entry = ImageEntry(
             path=new_path,
             filename=new_path.name,
             exif_date=entry.exif_date,
             file_size=entry.file_size,
         )
-        self.album.remove(idx)
+        if not self.copy_mode:
+            self.album.remove(idx)
         self.library.add(new_entry)
         self._refresh_collections()
 
@@ -89,8 +98,11 @@ class AppController:
         result = self.ops.undo()
         if result is None:
             return
-        was_at, now_at = result
-        self._sync_after_undo(was_at, now_at)
+        kind, was_at, now_at = result
+        if kind == "copy":
+            self._remove_after_undo(was_at)
+        else:
+            self._sync_after_undo(was_at, now_at)
         self._refresh_collections()
 
     # ------------------------------------------------------------------
@@ -235,6 +247,16 @@ class AppController:
 
     def _active(self) -> ImageCollection:
         return self.library if self.focus == "library" else self.album
+
+    def _remove_after_undo(self, path: Path) -> None:
+        """Drop the entry for a copy that undo just trashed. The original never
+        moved, so nothing is added back."""
+        for col in (self.library, self.album):
+            for i, e in enumerate(col.entries):
+                if e.path == path:
+                    col.entries.pop(i)
+                    col.cursor = max(0, min(col.cursor, len(col.entries) - 1))
+                    return
 
     def _sync_after_undo(self, was_at: Path, now_at: Path) -> None:
         """Update in-memory collections to reflect a file moved from was_at back to now_at."""

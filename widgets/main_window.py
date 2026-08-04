@@ -37,6 +37,12 @@ _BTN_STYLE = (
     "QPushButton:pressed { background-color: #222; }"
     "QPushButton:disabled { color: #555; }"
 )
+_TOGGLE_STYLE = (
+    "QPushButton { background-color: #333; color: #ddd; border: 1px solid #555; "
+    "padding: 6px 14px; border-radius: 4px; font-size: 13px; }"
+    "QPushButton:hover { background-color: #444; }"
+    "QPushButton:checked { background-color: #1e4a1e; border-color: #3a7a3a; color: #8fdf8f; }"
+)
 
 
 class MainWindow(QMainWindow):
@@ -197,6 +203,15 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         layout.addWidget(btn(tr("btn_to_album"), c.send_to_album, tr("tooltip_to_album")))
         layout.addWidget(btn(tr("btn_to_library"), c.send_to_library, tr("tooltip_to_library")))
+
+        self._copy_toggle = QPushButton(tr("btn_copy_mode"))
+        self._copy_toggle.setCheckable(True)
+        self._copy_toggle.setStyleSheet(_TOGGLE_STYLE)
+        self._copy_toggle.setToolTip(tr("tooltip_copy_mode"))
+        self._copy_toggle.setChecked(c.copy_mode)
+        self._copy_toggle.toggled.connect(self._on_copy_mode_toggled)
+        layout.addWidget(self._copy_toggle)
+
         layout.addStretch()
         layout.addWidget(btn(tr("btn_edit"), c.open_edit_mode, tr("tooltip_edit")))
         layout.addWidget(btn(tr("btn_rotate"), c.quick_rotate, tr("tooltip_rotate")))
@@ -280,6 +295,13 @@ class MainWindow(QMainWindow):
         cfg = Config.load()
         cfg.library_path = self.controller.library.path
         cfg.album_path = self.controller.album.path
+        cfg.save()
+
+    def _on_copy_mode_toggled(self, checked: bool) -> None:
+        self.controller.copy_mode = checked
+        from config import Config
+        cfg = Config.load()
+        cfg.copy_when_moving = checked
         cfg.save()
 
     # ------------------------------------------------------------------

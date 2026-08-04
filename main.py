@@ -59,6 +59,7 @@ def main() -> None:
             sys.exit(0)
 
     controller = AppController()
+    controller.copy_mode = config.copy_when_moving
     window = MainWindow(controller)
 
     controller.library.load(config.library_path)
