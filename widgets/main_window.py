@@ -6,6 +6,7 @@ import numpy as np
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -42,6 +43,19 @@ _TOGGLE_STYLE = (
     "padding: 6px 14px; border-radius: 4px; font-size: 13px; }"
     "QPushButton:hover { background-color: #444; }"
     "QPushButton:checked { background-color: #1e4a1e; border-color: #3a7a3a; color: #8fdf8f; }"
+)
+_MINI_BTN = (
+    "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+    "padding: 2px 8px; border-radius: 3px; font-size: 11px; }"
+    "QPushButton:hover { background-color: #383838; color: #ccc; }"
+    "QPushButton:pressed { background-color: #1a1a1a; }"
+)
+_MINI_COMBO = (
+    "QComboBox { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+    "padding: 2px 6px; border-radius: 3px; font-size: 11px; }"
+    "QComboBox:hover { background-color: #383838; }"
+    "QComboBox QAbstractItemView { background-color: #2a2a2a; color: #ddd; "
+    "selection-background-color: #1e3a5f; }"
 )
 
 
@@ -154,7 +168,11 @@ class MainWindow(QMainWindow):
         self.library_strip = ThumbnailStrip()
         self.album_strip = ThumbnailStrip()
         splitter.addWidget(self._labeled_strip(tr("library_strip_title"), self.library_strip))
-        splitter.addWidget(self._labeled_strip(tr("album_strip_title"), self.album_strip))
+        splitter.addWidget(
+            self._labeled_strip(
+                tr("album_strip_title"), self.album_strip, self._build_album_check_controls()
+            )
+        )
         splitter.setSizes([640, 640])
         root.addWidget(splitter)
 
@@ -173,16 +191,82 @@ class MainWindow(QMainWindow):
         self._edit_panel = EditPanel(self.controller, parent=central)
         self._edit_panel.hide()
 
-    def _labeled_strip(self, title: str, strip: ThumbnailStrip) -> QWidget:
+    def _labeled_strip(
+        self, title: str, strip: ThumbnailStrip, header_extra: QWidget | None = None
+    ) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
+
+        header = QWidget()
+        hb = QHBoxLayout(header)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.setSpacing(6)
         lbl = QLabel(title)
         lbl.setStyleSheet("color: #666; font-size: 10px; padding-left: 4px;")
-        layout.addWidget(lbl)
+        hb.addWidget(lbl)
+        if header_extra is not None:
+            hb.addStretch()
+            hb.addWidget(header_extra)
+        layout.addWidget(header)
         layout.addWidget(strip)
         return container
+
+    def _build_album_check_controls(self) -> QWidget:
+        """Print-check selector for the album: pick a target size, run the check,
+        and see which one is currently applied."""
+        bar = QWidget()
+        hb = QHBoxLayout(bar)
+        hb.setContentsMargins(0, 0, 4, 0)
+        hb.setSpacing(4)
+
+        self._album_check_status = QLabel("")
+        self._album_check_status.setStyleSheet("font-size: 10px; color: #666;")
+
+        self._album_check_combo = QComboBox()
+        self._album_check_combo.setStyleSheet(_MINI_COMBO)
+        self._album_check_combo.setToolTip(tr("tooltip_album_check"))
+        self._album_check_combo.addItem(tr("check_4r"), "4r")
+        self._album_check_combo.addItem(tr("check_instax"), "instax")
+
+        run_btn = QPushButton(tr("check_run_btn"))
+        run_btn.setStyleSheet(_MINI_BTN)
+        run_btn.setToolTip(tr("tooltip_album_check"))
+        run_btn.clicked.connect(self._on_run_album_check)
+
+        clear_btn = QPushButton(tr("check_clear_btn"))
+        clear_btn.setStyleSheet(_MINI_BTN)
+        clear_btn.clicked.connect(self._on_clear_album_check)
+
+        hb.addWidget(self._album_check_status)
+        hb.addWidget(self._album_check_combo)
+        hb.addWidget(run_btn)
+        hb.addWidget(clear_btn)
+        return bar
+
+    def _on_run_album_check(self) -> None:
+        self.controller.run_album_check(self._album_check_combo.currentData())
+
+    def _on_clear_album_check(self) -> None:
+        self.controller.run_album_check("none")
+
+    def update_album_check_status(self, check_id: str, n_fail: int, n_total: int) -> None:
+        """Reflect the active album check so the user knows why cells are marked."""
+        if check_id not in ("4r", "instax"):
+            self._album_check_status.setText(tr("check_status_none"))
+            self._album_check_status.setStyleSheet("font-size: 10px; color: #666;")
+            return
+        idx = self._album_check_combo.findData(check_id)
+        name = self._album_check_combo.itemText(idx) if idx >= 0 else check_id
+        if n_fail == 0:
+            self._album_check_status.setText(tr("check_status_pass").format(name=name))
+            self._album_check_status.setStyleSheet("font-size: 10px; color: #6ab86a;")
+        else:
+            self._album_check_status.setText(
+                tr("check_status_fail").format(name=name, count=n_fail)
+            )
+            self._album_check_status.setStyleSheet("font-size: 10px; color: #ff6b6b;")
 
     def _build_action_bar(self) -> QWidget:
         row = QWidget()

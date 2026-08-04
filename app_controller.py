@@ -9,19 +9,31 @@ import numpy as np
 import img_io
 from edit_ops import EditState, apply_pipeline, apply_rotate
 from file_ops import FileOps
-from image_collection import ImageCollection, ImageEntry, ensure_exif
+from image_collection import (
+    ImageCollection,
+    ImageEntry,
+    ensure_exif,
+    image_dimensions,
+    invalidate_dimensions,
+)
 
 if TYPE_CHECKING:
     from widgets.main_window import MainWindow
 
 
 class AppController:
+    # Album print-check targets: pixel aspect ratio (w/h) for the landscape
+    # orientation. Either orientation passes, so the portrait inverse counts too.
+    _CHECK_RATIOS = {"4r": 3 / 2, "instax": 4 / 3}
+    _CHECK_TOL = 0.03   # ±3% — comfortably separates 3:2 (1.5) from 4:3 (1.333)
+
     def __init__(self) -> None:
         self.library = ImageCollection()
         self.album = ImageCollection()
         self.focus: Literal["library", "album"] = "library"
         self.ops = FileOps()
         self.copy_mode = False   # when True, send_to_* copies instead of moving
+        self.album_check = "none"   # "none" | "4r" | "instax"
         self._window: MainWindow | None = None
         self._edit_entry: ImageEntry | None = None
         self._edit_original: np.ndarray | None = None
@@ -167,6 +179,7 @@ class AppController:
                 for i, e in enumerate(active.entries):
                     if e.path == self._edit_entry.path:
                         active.entries[i].file_size = target_path.stat().st_size
+                        invalidate_dimensions(active.entries[i])
                         break
             elif target_path.parent == self._edit_entry.path.parent:
                 # New name in the same folder: add to the collection so it
@@ -223,6 +236,7 @@ class AppController:
 
             shutil.move(str(tmp_path), str(entry.path))
             os.utime(entry.path, (stat.st_atime, stat.st_mtime))
+            invalidate_dimensions(entry)
         except Exception as exc:
             from PyQt6.QtWidgets import QMessageBox
             from i18n import tr
@@ -299,10 +313,48 @@ class AppController:
         self._window.album_strip.set_selected(self.album.cursor)
         self._window.album_strip.set_focused(self.focus == "album")
 
+    # ------------------------------------------------------------------
+    # Album print check
+    # ------------------------------------------------------------------
+
+    def run_album_check(self, check_id: str) -> None:
+        """Set the active album print check ("none"/"4r"/"instax") and refresh
+        so failing photos get marked (or all marks clear when "none")."""
+        self.album_check = check_id if check_id in self._CHECK_RATIOS else "none"
+        self._refresh_collections()
+
+    def _aspect_passes(self, w: int, h: int, ratio: float) -> bool:
+        if h == 0:
+            return False
+        aspect = w / h
+        for target in (ratio, 1.0 / ratio):
+            if abs(aspect - target) <= self._CHECK_TOL * target:
+                return True
+        return False
+
+    def _album_flagged_paths(self) -> set[Path]:
+        """Album paths that fail the active print check. Empty when off, or when
+        a file's size can't be read (we don't flag what we can't measure)."""
+        if self.album_check not in self._CHECK_RATIOS:
+            return set()
+        ratio = self._CHECK_RATIOS[self.album_check]
+        flagged: set[Path] = set()
+        for entry in self.album.entries:
+            dims = image_dimensions(entry)
+            if dims is None:
+                continue
+            if not self._aspect_passes(dims[0], dims[1], ratio):
+                flagged.add(entry.path)
+        return flagged
+
     def _refresh_collections(self) -> None:
         """Rebuild both strips from scratch, then refresh selection."""
         if self._window is None:
             return
         self._window.library_strip.load(self.library)
-        self._window.album_strip.load(self.album)
+        flagged = self._album_flagged_paths()
+        self._window.album_strip.load(self.album, flagged)
+        self._window.update_album_check_status(
+            self.album_check, len(flagged), len(self.album.entries)
+        )
         self._refresh_selection()

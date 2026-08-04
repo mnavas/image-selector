@@ -14,6 +14,7 @@ class ImageEntry:
     exif_date: datetime | None
     file_size: int
     _exif_loaded: bool = False  # True once we've attempted a read
+    _dims: tuple[int, int] | None = None  # (width, height), cached lazily
 
 
 def read_exif_date(path: Path) -> datetime | None:
@@ -38,6 +39,28 @@ def ensure_exif(entry: ImageEntry) -> None:
     if not entry._exif_loaded:
         entry.exif_date = read_exif_date(entry.path)
         entry._exif_loaded = True
+
+
+def image_dimensions(entry: ImageEntry) -> tuple[int, int] | None:
+    """Return (width, height) in pixels, reading only the image header.
+
+    Cached on the entry; call invalidate_dimensions() after the file on disk
+    changes (e.g. an in-place edit) so the next read reflects the new size.
+    """
+    if entry._dims is None:
+        try:
+            from PIL import Image
+
+            with Image.open(entry.path) as img:
+                entry._dims = (img.width, img.height)
+        except Exception:
+            entry._dims = None
+    return entry._dims
+
+
+def invalidate_dimensions(entry: ImageEntry) -> None:
+    """Drop the cached size so image_dimensions() re-reads it from disk."""
+    entry._dims = None
 
 
 class ImageCollection:
