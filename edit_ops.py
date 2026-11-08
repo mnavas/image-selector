@@ -6,17 +6,32 @@ import cv2
 import numpy as np
 
 
+# One-click corrections. These fix exposure / colour of the base image and are
+# kept SEPARATE from the film look (they used to share `filter_name`, which made
+# them mutually exclusive with a look). "none" = off.
+AUTO_CORRECTIONS = ("none", "auto_tone", "auto_levels", "auto_wb", "normalize")
+
+
 @dataclass
 class EditState:
     brightness: float = 0.0    # ±100
     contrast: float = 0.0      # ±100
     exposure: float = 0.0      # ±3.0 stops
     saturation: float = 0.0    # ±100
+    vibrance: float = 0.0      # ±100 — saturation that protects already-saturated pixels
     shadows: float = 0.0       # ±100
     highlights: float = 0.0    # ±100
+    auto_correct: str = "none"       # one-click correction, independent of the film look
     filter_name: str = "original"
     crop_rect: tuple | None = None   # (x, y, w, h) normalised 0-1 of post-rotate image
     rotation: int = 0                # clockwise degrees: 0, 90, 180, 270
+
+    def __post_init__(self) -> None:
+        # Backward compatibility: auto corrections used to live in `filter_name`.
+        # Migrate an old state so it still renders the same, now in its own slot.
+        if self.filter_name in AUTO_CORRECTIONS and self.filter_name != "none":
+            self.auto_correct = self.filter_name
+            self.filter_name = "original"
 
     def is_default(self) -> bool:
         return (
@@ -24,8 +39,10 @@ class EditState:
             and self.contrast == 0.0
             and self.exposure == 0.0
             and self.saturation == 0.0
+            and self.vibrance == 0.0
             and self.shadows == 0.0
             and self.highlights == 0.0
+            and self.auto_correct == "none"
             and self.filter_name == "original"
             and self.crop_rect is None
             and self.rotation == 0
@@ -83,6 +100,35 @@ def apply_saturation(img: np.ndarray, value: float) -> np.ndarray:
     factor = 1.0 + value / 100.0
     hsv[:, :, 1] = np.clip(hsv[:, :, 1] * factor, 0, 255)
     return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def apply_vibrance(img: np.ndarray, value: float) -> np.ndarray:
+    """Smart saturation: boost low-saturation pixels more than already-vivid ones.
+
+    Unlike flat saturation this protects skin tones and colours that are already
+    saturated, so a quick +vibrance pops a photo without going garish. value ∈ [-100, 100].
+    """
+    if value == 0.0:
+        return img
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    s = hsv[:, :, 1] / 255.0
+    amt = value / 100.0
+    # gain is strongest where s is small (≈1+amt) and ≈1 where s is already high
+    hsv[:, :, 1] = np.clip(s * (1.0 + amt * (1.0 - s)), 0, 1) * 255.0
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def apply_auto_correct(img: np.ndarray, kind: str) -> np.ndarray:
+    """Dispatch a one-click correction by name (see AUTO_CORRECTIONS)."""
+    if kind == "auto_tone":
+        return apply_auto_tone(img)
+    if kind == "auto_levels":
+        return apply_auto_levels(img)
+    if kind == "auto_wb":
+        return apply_auto_wb(img)
+    if kind == "normalize":
+        return apply_normalize(img)
+    return img
 
 
 def apply_shadows(img: np.ndarray, value: float) -> np.ndarray:
@@ -211,22 +257,19 @@ def apply_pipeline(img: np.ndarray, state: EditState) -> np.ndarray:
         x, y, w, h = state.crop_rect
         out = apply_crop(out, x, y, w, h)
 
+    # One-click correction first — it fixes the base image; manual tweaks and the
+    # film look are then layered on top (so an auto fix and a look can coexist).
+    out = apply_auto_correct(out, state.auto_correct)
+
     out = apply_exposure(out, state.exposure)
     out = apply_brightness(out, state.brightness)
     out = apply_contrast(out, state.contrast)
     out = apply_saturation(out, state.saturation)
+    out = apply_vibrance(out, state.vibrance)
     out = apply_shadows(out, state.shadows)
     out = apply_highlights(out, state.highlights)
 
-    if state.filter_name == "normalize":
-        out = apply_normalize(out)
-    elif state.filter_name == "auto_levels":
-        out = apply_auto_levels(out)
-    elif state.filter_name == "auto_tone":
-        out = apply_auto_tone(out)
-    elif state.filter_name == "auto_wb":
-        out = apply_auto_wb(out)
-    elif state.filter_name in FILM_SIMS:
+    if state.filter_name in FILM_SIMS:
         out = FILM_SIMS[state.filter_name](out)
 
     return out

@@ -54,6 +54,12 @@ _SMALL_BTN = (
     "QPushButton:pressed { background-color: #1a1a1a; }"
     "QPushButton:checked { background-color: #1e3a5f; border-color: #4a9eff; color: #fff; }"
 )
+_AUTO_BTN = (
+    "QPushButton { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
+    "padding: 3px 6px; border-radius: 3px; font-size: 11px; }"
+    "QPushButton:hover { background-color: #383838; }"
+    "QPushButton:checked { background-color: #1e3a5f; border-color: #4a9eff; color: #fff; }"
+)
 _SMALL_COMBO = (
     "QComboBox { background-color: #2a2a2a; color: #aaa; border: 1px solid #444; "
     "padding: 3px 8px; border-radius: 3px; font-size: 12px; }"
@@ -400,6 +406,7 @@ class AdjustmentsPanel(QWidget):
         ("contrast",   "contrast",   -100, 100),
         ("exposure",   "exposure",    -30,  30),   # ×0.1 → ±3.0 stops
         ("saturation", "saturation", -100, 100),
+        ("vibrance",   "vibrance",   -100, 100),
         ("shadows",    "shadows",    -100, 100),
         ("highlights", "highlights", -100, 100),
     ]
@@ -677,7 +684,8 @@ class FiltersPanel(QWidget):
             (None, [("original", tr("filter_original"))]),
             (None, self._CAMERA_FILTERS),
             (None, self._FILM_FILTERS),
-            (None, self._AUTO_FILTERS),
+            # Auto corrections are no longer film looks — they live in their own
+            # one-click row (self._auto_btns) and apply independently of the look.
         ]
 
     def _rebuild(self) -> None:
@@ -818,6 +826,12 @@ class EditPanel(QWidget):
         self._comparing = False                          # press-and-hold before/after
         self._copied_look: dict | None = None            # copy/paste edits across photos
 
+        # Keyboard nudges (e.g. holding ]) coalesce into ONE undo step: the first
+        # nudge of a burst snapshots history; the timer closes the burst on a pause.
+        self._nudge_timer = QTimer()
+        self._nudge_timer.setSingleShot(True)
+        self._nudge_timer.setInterval(700)
+
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(50)
@@ -858,6 +872,7 @@ class EditPanel(QWidget):
 
         self._adjustments.reset()
         self._filters.reset()
+        self._update_auto_buttons()
         self._crop_btn.setChecked(False)
         self._preview.stop_crop()
         self._filename_lbl.setText(entry.filename)
@@ -1007,6 +1022,32 @@ class EditPanel(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
 
+        # One-click corrections (independent of the film look) — fast while culling.
+        auto_box = QGroupBox(tr("auto_title"))
+        auto_box.setStyleSheet(
+            "QGroupBox { color: #777; font-size: 10px; border: none; margin-top: 8px; padding-top: 4px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; }"
+        )
+        auto_layout = QHBoxLayout(auto_box)
+        auto_layout.setContentsMargins(8, 4, 8, 4)
+        auto_layout.setSpacing(6)
+        self._auto_btns: dict[str, QPushButton] = {}
+        # (mode, label key, tooltip key with the hotkey)
+        for mode, lbl_key, tip_key in (
+            ("auto_tone",   "auto_tone_btn",   "tooltip_auto_tone"),
+            ("auto_levels", "auto_levels_btn", "tooltip_auto_levels"),
+            ("auto_wb",     "auto_wb_btn",     "tooltip_auto_wb"),
+            ("normalize",   "auto_normalize_btn", "tooltip_auto_normalize"),
+        ):
+            btn = QPushButton(tr(lbl_key))
+            btn.setCheckable(True)
+            btn.setStyleSheet(_AUTO_BTN)
+            btn.setToolTip(tr(tip_key))
+            btn.clicked.connect(lambda _checked, m=mode: self._toggle_auto(m))
+            self._auto_btns[mode] = btn
+            auto_layout.addWidget(btn)
+        auto_layout.addStretch()
+
         adj_box = QGroupBox(tr("adjustments_title"))
         adj_box.setStyleSheet(
             "QGroupBox { color: #777; font-size: 10px; border: none; margin-top: 8px; padding-top: 4px; }"
@@ -1125,6 +1166,7 @@ class EditPanel(QWidget):
         look_layout.addStretch()
 
         rl.addWidget(look_row)
+        rl.addWidget(auto_box)
         rl.addWidget(adj_box)
         rl.addWidget(filt_box)
         rl.addWidget(ai_box)
@@ -1146,6 +1188,7 @@ class EditPanel(QWidget):
         self._state.contrast = vals["contrast"]
         self._state.exposure = vals["exposure"]
         self._state.saturation = vals["saturation"]
+        self._state.vibrance = vals["vibrance"]
         self._state.shadows = vals["shadows"]
         self._state.highlights = vals["highlights"]
         self._debounce.start()
@@ -1197,7 +1240,8 @@ class EditPanel(QWidget):
         self._apply_state_dict({
             "brightness": st.brightness, "contrast": st.contrast,
             "exposure": float(st.exposure), "saturation": st.saturation,
-            "shadows": st.shadows, "highlights": st.highlights,
+            "vibrance": st.vibrance, "shadows": st.shadows, "highlights": st.highlights,
+            "auto_correct": st.auto_correct,
             "filter_name": st.filter_name, "rotation": st.rotation,
         })
 
@@ -1269,6 +1313,38 @@ class EditPanel(QWidget):
         self._redo_btn.setEnabled(bool(session and session._redo))
 
     # ------------------------------------------------------------------
+    # One-click auto corrections (independent of the film look) + nudges
+    # ------------------------------------------------------------------
+
+    def _toggle_auto(self, mode: str) -> None:
+        """Apply/clear a one-click correction via the registry (toggles if same)."""
+        if self._original is None:
+            return
+        self.apply_command("image.autoCorrect", {"mode": mode})   # journals one step
+        self._update_auto_buttons()
+
+    def _update_auto_buttons(self) -> None:
+        active = getattr(self._state, "auto_correct", "none")
+        for mode, btn in getattr(self, "_auto_btns", {}).items():
+            btn.setChecked(mode == active)
+
+    def _nudge(self, attr: str, delta: int) -> None:
+        """Bump one adjustment slider by `delta` slider-units (exposure is ×10)."""
+        slider = self._adjustments._sliders.get(attr)
+        if slider is None:
+            return
+        if not self._nudge_timer.isActive():
+            self._push_edit_history()                    # one undo step per burst
+        self._nudge_timer.start()
+        new = max(slider.minimum(), min(slider.maximum(), slider.value() + delta))
+        slider.setValue(new)                             # fires _on_state_changed → preview
+
+    def _reset_all(self) -> None:
+        """Back to the untouched original (keeps this photo's crop/rotation)."""
+        self.apply_command("adjust.reset", {})
+        self._update_auto_buttons()
+
+    # ------------------------------------------------------------------
     # Copy / paste "look" (adjustments + filter) across photos
     # ------------------------------------------------------------------
 
@@ -1280,6 +1356,7 @@ class EditPanel(QWidget):
         """
         look = self._adjustments.get_values()            # exposure in stops (float)
         look["filter_name"] = self._state.filter_name
+        look["auto_correct"] = self._state.auto_correct
         self._copied_look = look
         self._paste_look_btn.setEnabled(True)
         self._album_look_btn.setEnabled(True)
@@ -1297,8 +1374,10 @@ class EditPanel(QWidget):
             contrast=float(look.get("contrast", 0)),
             exposure=float(look.get("exposure", 0)),     # stops
             saturation=float(look.get("saturation", 0)),
+            vibrance=float(look.get("vibrance", 0)),
             shadows=float(look.get("shadows", 0)),
             highlights=float(look.get("highlights", 0)),
+            auto_correct=str(look.get("auto_correct", "none")),
             filter_name=str(look.get("filter_name", "original")),
             rotation=0,
         )
@@ -1389,7 +1468,7 @@ class EditPanel(QWidget):
         dlg = FilterManagerDialog(
             FiltersPanel._CAMERA_FILTERS,
             FiltersPanel._FILM_FILTERS,
-            FiltersPanel._AUTO_FILTERS,
+            [],   # auto corrections are now a separate one-click row, not film looks
             self._filters.get_hidden(),
             parent=self,
         )
@@ -1409,8 +1488,10 @@ class EditPanel(QWidget):
             "contrast":    adj._sliders["contrast"].value(),
             "exposure":    adj._sliders["exposure"].value(),   # stored ×10
             "saturation":  adj._sliders["saturation"].value(),
+            "vibrance":    adj._sliders["vibrance"].value(),
             "shadows":     adj._sliders["shadows"].value(),
             "highlights":  adj._sliders["highlights"].value(),
+            "auto_correct": self._state.auto_correct,
             "filter_name": self._state.filter_name,
             "rotation":    self._state.rotation,
         }
@@ -1430,6 +1511,7 @@ class EditPanel(QWidget):
             else int(exp_raw)
         )
         adj._sliders["saturation"].setValue(int(state["saturation"]))
+        adj._sliders["vibrance"].setValue(int(state.get("vibrance", 0)))
         adj._sliders["shadows"].setValue(int(state["shadows"]))
         adj._sliders["highlights"].setValue(int(state["highlights"]))
 
@@ -1443,7 +1525,9 @@ class EditPanel(QWidget):
         fname = state.get("filter_name", "original")
         self._filters.set_filter(fname)
         self._state.filter_name = fname
+        self._state.auto_correct = state.get("auto_correct", "none")
         self._state.rotation = state.get("rotation", 0)
+        self._update_auto_buttons()
         self._on_state_changed()
 
     def _on_ai_apply(self) -> None:
@@ -1549,6 +1633,10 @@ class EditPanel(QWidget):
             self._edit_undo()
         elif key in (Qt.Key.Key_Y,) and ctrl:
             self._edit_redo()
+        elif key == Qt.Key.Key_C and ctrl:
+            self._copy_look()
+        elif key == Qt.Key.Key_V and ctrl:
+            self._paste_look()
         elif key == Qt.Key.Key_Backslash:
             if not event.isAutoRepeat():      # hold \ to peek at the original
                 self._set_compare(True)
@@ -1556,6 +1644,30 @@ class EditPanel(QWidget):
             self._filters.select_next()   # cycle the filter dropdown, preview updates
         elif key == Qt.Key.Key_Up:
             self._filters.select_prev()
+        # --- one-key auto corrections (no modifier): stack on the film look ---
+        elif key == Qt.Key.Key_A and not ctrl:
+            self._toggle_auto("auto_tone")
+        elif key == Qt.Key.Key_L and not ctrl:
+            self._toggle_auto("auto_levels")
+        elif key == Qt.Key.Key_W and not ctrl:
+            self._toggle_auto("auto_wb")
+        elif key == Qt.Key.Key_N and not ctrl:
+            self._toggle_auto("normalize")
+        # --- keyboard tone nudges (hold to repeat; one undo step per burst) ---
+        elif key == Qt.Key.Key_BracketLeft:
+            self._nudge("exposure", -3)   # −0.3 stop
+        elif key == Qt.Key.Key_BracketRight:
+            self._nudge("exposure", +3)   # +0.3 stop
+        elif key == Qt.Key.Key_Comma:
+            self._nudge("contrast", -5)
+        elif key == Qt.Key.Key_Period:
+            self._nudge("contrast", +5)
+        elif key == Qt.Key.Key_Minus:
+            self._nudge("vibrance", -10)
+        elif key == Qt.Key.Key_Equal:
+            self._nudge("vibrance", +10)
+        elif key == Qt.Key.Key_0:
+            self._reset_all()
         else:
             super().keyPressEvent(event)
 

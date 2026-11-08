@@ -23,12 +23,15 @@ import numpy as np
 from edit_ops import EditState, apply_pipeline
 
 # The scalar slider fields of EditState (all clamp ranges are enforced by the ops).
-ADJUST_FIELDS = ["brightness", "contrast", "exposure", "saturation", "shadows", "highlights"]
+ADJUST_FIELDS = ["brightness", "contrast", "exposure", "saturation", "vibrance",
+                 "shadows", "highlights"]
 
-# Valid filter_name values: the non-film presets plus every film simulation.
+# Valid filter_name values: "original" plus every film / camera simulation.
+# One-click corrections (auto tone/levels/wb/normalize) are NOT film looks — they
+# live in their own `auto_correct` slot and have their own command below.
 def _filter_names() -> list[str]:
     from film_luts import FILM_SIMS
-    return ["original", "normalize", "auto_levels", "auto_tone", "auto_wb", *FILM_SIMS]
+    return ["original", *FILM_SIMS]
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +273,27 @@ def _run_filter(s: Session, p: dict) -> dict:
 register(CommandSpec(
     id="filter.set", label="Set Film Look", menu=("Image", "Film"), journal=True,
     run=_run_filter, params={"name": {"type": "enum", "values_fn": "filters"}}))
+
+
+def _run_auto_correct(s: Session, p: dict) -> dict:
+    from edit_ops import AUTO_CORRECTIONS
+    mode = str(p.get("mode", "none"))
+    if mode not in AUTO_CORRECTIONS:
+        raise ValueError(f"unknown correction `{mode}`; one of: {', '.join(AUTO_CORRECTIONS)}")
+    s.push_history()
+    # pressing the same correction again toggles it off — fast A/B while culling
+    s.state.auto_correct = "none" if s.state.auto_correct == mode else mode
+    return {"auto_correct": s.state.auto_correct}
+
+
+register(CommandSpec(
+    id="image.autoCorrect", label="Auto Correct", menu=("Image", "Auto"), journal=True,
+    run=_run_auto_correct,
+    params={"mode": {"type": "enum",
+                     "values": ["auto_tone", "auto_levels", "auto_wb", "normalize", "none"],
+                     "default": "auto_tone",
+                     "doc": "one-click correction, independent of the film look; "
+                            "re-sending the current one turns it off"}}))
 
 
 def _run_rotate(s: Session, p: dict) -> dict:

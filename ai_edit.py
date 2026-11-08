@@ -31,15 +31,28 @@ Analyse the image carefully, then return ONLY a JSON object — no markdown,
 no explanation, no code fences — that matches this schema exactly:
 
 {
-  "brightness":  <float, -100 to 100>,
-  "contrast":    <float, -100 to 100>,
-  "exposure":    <float, -3.0 to 3.0>,
-  "saturation":  <float, -100 to 100>,
-  "shadows":     <float, -100 to 100>,
-  "highlights":  <float, -100 to 100>,
-  "filter_name": <string — one of the values listed below>,
-  "rotation":    <integer — one of: 0, 90, 180, 270>
+  "brightness":   <float, -100 to 100>,
+  "contrast":     <float, -100 to 100>,
+  "exposure":     <float, -3.0 to 3.0>,
+  "saturation":   <float, -100 to 100>,
+  "vibrance":     <float, -100 to 100>,
+  "shadows":      <float, -100 to 100>,
+  "highlights":   <float, -100 to 100>,
+  "auto_correct": <string — one of: "none", "auto_tone", "auto_levels", "auto_wb", "normalize">,
+  "filter_name":  <string — one of the values listed below>,
+  "rotation":     <integer — one of: 0, 90, 180, 270>
 }
+
+"vibrance" is like saturation but protects already-saturated colours and skin
+tones — prefer it over "saturation" for a gentle, natural pop.
+
+"auto_correct" is a one-click fix applied before your manual tweaks and the film
+look (they combine):
+  "none"         — no automatic correction
+  "normalize"    — adaptive histogram equalisation (CLAHE), local contrast
+  "auto_levels"  — stretch each channel to full range (fixes exposure + cast)
+  "auto_tone"    — stretch luminance only (fixes exposure, keeps colour)
+  "auto_wb"      — grey-world white balance (removes a colour cast)
 
 Valid filter_name values:
   "original"     — no film simulation
@@ -73,15 +86,12 @@ Valid filter_name values:
   "superia_1600" — warm high-ISO consumer, pushed and contrasty
   "superia_400"  — warm consumer film, slight green cast
   "superia_100"  — clean slow consumer film, barely warm
-  "normalize"    — adaptive histogram equalisation (CLAHE)
-  "auto_levels"  — stretch each channel to full range
-  "auto_tone"    — stretch luminance only
-  "auto_wb"      — grey-world white balance correction
 
 Rules:
 - All numeric values must be within their stated range. Do not add fields.
 - Set "rotation" to 0 unless the user explicitly asks to rotate.
 - Set "filter_name" to "original" if no film simulation is needed.
+- Set "auto_correct" to "none" unless an automatic fix clearly helps.
 - For black-and-white requests prefer "acros" or "neopan_1600" over
   setting saturation to -100.
 - Base your response on both the image content AND the user's description.
@@ -99,8 +109,10 @@ _VALID_FILTERS = {
     "acros", "eterna", "sepia", "faded", "cross_process", "fortia_sp",
     "neopan_1600", "t64", "pro_800z", "pro_400h", "pro_160c", "pro_160s",
     "superia_1600", "superia_400", "superia_100",
-    "normalize", "auto_levels", "auto_tone", "auto_wb",
 }
+
+# One-click corrections live in their own field now, not in filter_name.
+from edit_ops import AUTO_CORRECTIONS
 
 
 def encode_for_api(img: np.ndarray, max_side: int = 768) -> str:
@@ -226,15 +238,25 @@ def parse_edit_state(text: str) -> dict:
     def _f(key: str, lo: float, hi: float, default: float = 0.0) -> float:
         return max(lo, min(hi, float(data.get(key, default))))
 
+    auto = str(data.get("auto_correct", "none"))
+    fname = str(data.get("filter_name", "original"))
+    # Backward tolerance: a model may still put an auto correction in filter_name.
+    if auto == "none" and fname in AUTO_CORRECTIONS and fname != "none":
+        auto, fname = fname, "original"
+    if auto not in AUTO_CORRECTIONS:
+        auto = "none"
+
     result = {
-        "brightness":  _f("brightness",  -100.0, 100.0),
-        "contrast":    _f("contrast",    -100.0, 100.0),
-        "exposure":    _f("exposure",      -3.0,   3.0),
-        "saturation":  _f("saturation",  -100.0, 100.0),
-        "shadows":     _f("shadows",     -100.0, 100.0),
-        "highlights":  _f("highlights",  -100.0, 100.0),
-        "filter_name": data.get("filter_name", "original"),
-        "rotation":    data.get("rotation", 0),
+        "brightness":   _f("brightness",  -100.0, 100.0),
+        "contrast":     _f("contrast",    -100.0, 100.0),
+        "exposure":     _f("exposure",      -3.0,   3.0),
+        "saturation":   _f("saturation",  -100.0, 100.0),
+        "vibrance":     _f("vibrance",    -100.0, 100.0),
+        "shadows":      _f("shadows",     -100.0, 100.0),
+        "highlights":   _f("highlights",  -100.0, 100.0),
+        "auto_correct": auto,
+        "filter_name":  fname,
+        "rotation":     data.get("rotation", 0),
     }
 
     if result["filter_name"] not in _VALID_FILTERS:
