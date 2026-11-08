@@ -1045,8 +1045,7 @@ class EditPanel(QWidget):
             btn.setToolTip(tr(tip_key))
             btn.clicked.connect(lambda _checked, m=mode: self._toggle_auto(m))
             self._auto_btns[mode] = btn
-            auto_layout.addWidget(btn)
-        auto_layout.addStretch()
+            auto_layout.addWidget(btn, 1)                 # share width, never overflow
 
         adj_box = QGroupBox(tr("adjustments_title"))
         adj_box.setStyleSheet(
@@ -1142,10 +1141,12 @@ class EditPanel(QWidget):
         ai_layout.addWidget(self._ai_status)
 
         # Copy / paste "look" (adjustments + filter) across photos
-        look_row = QWidget()
-        look_layout = QHBoxLayout(look_row)
-        look_layout.setContentsMargins(8, 8, 8, 0)
-        look_layout.setSpacing(6)
+        # Copy / paste "look" — two compact rows so they fit the 240px panel
+        # (three side-by-side buttons overflowed and clipped the whole column).
+        look_top = QWidget()
+        look_top_l = QHBoxLayout(look_top)
+        look_top_l.setContentsMargins(8, 8, 8, 0)
+        look_top_l.setSpacing(6)
         self._copy_look_btn = QPushButton(tr("copy_look_btn"))
         self._copy_look_btn.setStyleSheet(_SMALL_BTN)
         self._copy_look_btn.setToolTip(tr("tooltip_copy_look"))
@@ -1155,17 +1156,22 @@ class EditPanel(QWidget):
         self._paste_look_btn.setToolTip(tr("tooltip_paste_look"))
         self._paste_look_btn.clicked.connect(self._paste_look)
         self._paste_look_btn.setEnabled(False)           # nothing copied yet
+        look_top_l.addWidget(self._copy_look_btn, 1)
+        look_top_l.addWidget(self._paste_look_btn, 1)
+
+        look_bottom = QWidget()
+        look_bottom_l = QHBoxLayout(look_bottom)
+        look_bottom_l.setContentsMargins(8, 4, 8, 0)
+        look_bottom_l.setSpacing(6)
         self._album_look_btn = QPushButton(tr("look_batch_btn"))
         self._album_look_btn.setStyleSheet(_SMALL_BTN)
         self._album_look_btn.setToolTip(tr("tooltip_look_batch"))
         self._album_look_btn.clicked.connect(self._apply_look_to_album)
         self._album_look_btn.setEnabled(False)
-        look_layout.addWidget(self._copy_look_btn)
-        look_layout.addWidget(self._paste_look_btn)
-        look_layout.addWidget(self._album_look_btn)
-        look_layout.addStretch()
+        look_bottom_l.addWidget(self._album_look_btn, 1)
 
-        rl.addWidget(look_row)
+        rl.addWidget(look_top)
+        rl.addWidget(look_bottom)
         rl.addWidget(auto_box)
         rl.addWidget(adj_box)
         rl.addWidget(filt_box)
