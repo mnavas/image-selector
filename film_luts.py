@@ -243,10 +243,96 @@ def _superia_100(img: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Camera picture profiles (Canon / Nikon / Sony style) + contrast presets
+# ---------------------------------------------------------------------------
+
+def _cam_standard(img: np.ndarray) -> np.ndarray:
+    """Standard — mild S-curve, slightly boosted colour (default camera look)."""
+    lut = _curve([0, 64, 128, 192, 255], [0, 58, 128, 198, 255])
+    out = _apply_per_channel(img, lut, lut, lut)
+    return _scale_saturation(out, 1.12)
+
+
+def _cam_vivid(img: np.ndarray) -> np.ndarray:
+    """Vivid — punchy contrast and high saturation."""
+    lut = _curve([0, 48, 128, 208, 255], [0, 30, 128, 226, 255])
+    out = _apply_per_channel(img, lut, lut, lut)
+    return _scale_saturation(out, 1.4)
+
+
+def _cam_neutral(img: np.ndarray) -> np.ndarray:
+    """Neutral — low contrast, restrained colour for later editing."""
+    lut = _curve([0, 128, 255], [6, 128, 250])
+    out = _apply_per_channel(img, lut, lut, lut)
+    return _scale_saturation(out, 0.94)
+
+
+def _cam_faithful(img: np.ndarray) -> np.ndarray:
+    """Faithful — accurate colour, near-linear tone."""
+    lut = _curve([0, 128, 255], [2, 128, 253])
+    return _apply_per_channel(img, lut, lut, lut)
+
+
+def _cam_flat(img: np.ndarray) -> np.ndarray:
+    """Flat/Log — lifted blacks, pulled highlights, muted colour for grading."""
+    lut = _curve([0, 64, 128, 192, 255], [20, 76, 128, 180, 236])
+    out = _apply_per_channel(img, lut, lut, lut)
+    return _scale_saturation(out, 0.88)
+
+
+def _cam_landscape(img: np.ndarray) -> np.ndarray:
+    """Landscape — strong contrast, vivid greens and blues."""
+    lut = _curve([0, 48, 128, 208, 255], [0, 34, 128, 222, 255])
+    lut_g = _curve([0, 128, 255], [0, 134, 255])   # lift greens
+    lut_b = _curve([0, 128, 255], [0, 134, 255])   # lift blues
+    out = _apply_per_channel(img, lut_b, lut_g, lut)
+    return _scale_saturation(out, 1.3)
+
+
+def _cam_portrait(img: np.ndarray) -> np.ndarray:
+    """Portrait — gentle contrast, warm skin, restrained saturation."""
+    lut = _curve([0, 64, 128, 192, 255], [8, 68, 128, 190, 248])
+    lut_r = _curve([0, 128, 255], [0, 134, 255])   # slightly warm
+    out = _apply_per_channel(img, lut, lut, lut_r)
+    return _scale_saturation(out, 1.05)
+
+
+def _cam_monochrome(img: np.ndarray) -> np.ndarray:
+    """Monochrome — luminosity-weighted B&W with mild contrast."""
+    b, g, r = cv2.split(img.astype(np.float32))
+    y = np.clip(0.114 * b + 0.587 * g + 0.299 * r, 0, 255).astype(np.uint8)
+    lut = _curve([0, 64, 128, 192, 255], [0, 56, 128, 200, 255])
+    y = cv2.LUT(y, lut)
+    return cv2.cvtColor(y, cv2.COLOR_GRAY2BGR)
+
+
+def _high_contrast(img: np.ndarray) -> np.ndarray:
+    """High contrast tone preset."""
+    lut = _curve([0, 32, 128, 224, 255], [0, 14, 128, 242, 255])
+    return _apply_per_channel(img, lut, lut, lut)
+
+
+def _low_contrast(img: np.ndarray) -> np.ndarray:
+    """Low contrast tone preset (lifted blacks, pulled whites)."""
+    lut = _curve([0, 64, 128, 192, 255], [26, 80, 128, 176, 230])
+    return _apply_per_channel(img, lut, lut, lut)
+
+
+# ---------------------------------------------------------------------------
 # Public dict
 # ---------------------------------------------------------------------------
 
 FILM_SIMS: dict[str, object] = {
+    "standard": _cam_standard,
+    "vivid": _cam_vivid,
+    "neutral": _cam_neutral,
+    "faithful": _cam_faithful,
+    "flat": _cam_flat,
+    "landscape": _cam_landscape,
+    "portrait": _cam_portrait,
+    "monochrome": _cam_monochrome,
+    "high_contrast": _high_contrast,
+    "low_contrast": _low_contrast,
     "provia": _provia,
     "velvia": _velvia,
     "astia": _astia,

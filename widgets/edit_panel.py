@@ -30,7 +30,10 @@ from PyQt6.QtWidgets import (
 )
 
 from edit_ops import EditState, apply_pipeline
+import commands
 from i18n import tr
+from widgets.agent_toast import AgentToast
+from widgets.command_palette import CommandPalette, params_dialog
 from widgets.preview_widget import PreviewWidget, _ndarray_to_pixmap
 
 if TYPE_CHECKING:
@@ -483,6 +486,7 @@ class FilterManagerDialog(QDialog):
 
     def __init__(
         self,
+        camera_filters: list,
         film_filters: list,
         auto_filters: list,
         hidden: set,
@@ -514,6 +518,17 @@ class FilterManagerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(2)
         layout.setContentsMargins(16, 12, 16, 12)
+
+        # Camera profiles section
+        cam_lbl = QLabel(tr("section_camera_profiles"))
+        cam_lbl.setStyleSheet(_section)
+        layout.addWidget(cam_lbl)
+
+        for key, label in camera_filters:
+            cb = QCheckBox(label)
+            cb.setChecked(key not in hidden)
+            self._checks[key] = cb
+            layout.addWidget(cb)
 
         # Film simulations section
         film_lbl = QLabel(tr("film_simulations_title"))
@@ -617,18 +632,26 @@ class FiltersPanel(QWidget):
         ("auto_wb",     tr("filter_auto_wb")),
     ]
 
+    _CAMERA_FILTERS = [
+        ("standard",      tr("filter_standard")),
+        ("vivid",         tr("filter_vivid")),
+        ("neutral",       tr("filter_neutral")),
+        ("faithful",      tr("filter_faithful")),
+        ("flat",          tr("filter_flat")),
+        ("landscape",     tr("filter_landscape")),
+        ("portrait",      tr("filter_portrait")),
+        ("monochrome",    tr("filter_monochrome")),
+        ("high_contrast", tr("filter_high_contrast")),
+        ("low_contrast",  tr("filter_low_contrast")),
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
 
         self._hidden: set = set()
-        self._group = QButtonGroup(self)
-        self._radios: dict[str, QRadioButton] = {}
-
-        _rb_style = "color: #ccc; font-size: 16px;"
-        _section_style = "color: #666; font-size: 10px; padding-top: 6px; padding-left: 2px;"
 
         # "⚙ Manage" button at top
         manage_btn = QPushButton(tr("manage_btn"))
@@ -636,60 +659,96 @@ class FiltersPanel(QWidget):
         manage_btn.setFixedHeight(24)
         manage_btn.clicked.connect(self.manage_clicked.emit)
         layout.addWidget(manage_btn)
-        layout.addSpacing(4)
 
-        for key, label in self._FILM_FILTERS:
-            rb = QRadioButton(label)
-            rb.setStyleSheet(_rb_style)
-            self._group.addButton(rb)
-            self._radios[key] = rb
-            layout.addWidget(rb)
-            rb.toggled.connect(lambda checked, k=key: self.changed.emit(k) if checked else None)
-
-        self._auto_sep = QLabel(tr("auto_adjustments_title"))
-        self._auto_sep.setStyleSheet(_section_style)
-        layout.addWidget(self._auto_sep)
-
-        for key, label in self._AUTO_FILTERS:
-            rb = QRadioButton(label)
-            rb.setStyleSheet(_rb_style)
-            self._group.addButton(rb)
-            self._radios[key] = rb
-            layout.addWidget(rb)
-            rb.toggled.connect(lambda checked, k=key: self.changed.emit(k) if checked else None)
-
-        self._radios["original"].setChecked(True)
+        layout.addWidget(QLabel(tr("filter_label")))
+        self._combo = QComboBox()
+        self._combo.setStyleSheet(_SMALL_COMBO)
+        self._combo.setToolTip(tr("tooltip_filter_combo"))
+        self._combo.currentIndexChanged.connect(self._on_combo)
+        layout.addWidget(self._combo)
+        self._rebuild()
         layout.addStretch()
 
+    # -- combo building ----------------------------------------------------
+
+    def _groups(self) -> list:
+        """Ordered (section_title | None, [(key,label),...]) groups."""
+        return [
+            (None, [("original", tr("filter_original"))]),
+            (None, self._CAMERA_FILTERS),
+            (None, self._FILM_FILTERS),
+            (None, self._AUTO_FILTERS),
+        ]
+
+    def _rebuild(self) -> None:
+        current = self.get_filter() if self._combo.count() else "original"
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        for _title, items in self._groups():
+            visible = [(k, lbl) for k, lbl in items if k not in self._hidden]
+            if not visible:
+                continue
+            if self._combo.count() > 0:
+                self._combo.insertSeparator(self._combo.count())
+            for key, label in visible:
+                self._combo.addItem(label, key)
+        idx = self._combo.findData(current)
+        self._combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._combo.blockSignals(False)
+
+    def _on_combo(self, _index: int) -> None:
+        key = self._combo.currentData()
+        if key:
+            self.changed.emit(key)
+
+    # -- public API (unchanged signatures) ---------------------------------
+
     def get_filter(self) -> str:
-        for key, rb in self._radios.items():
-            if rb.isChecked():
-                return key
-        return "original"
+        return self._combo.currentData() or "original"
 
     def get_hidden(self) -> set:
         return set(self._hidden)
 
     def set_hidden(self, hidden: set) -> None:
-        self._hidden = hidden
-        current = self.get_filter()
-        if current in hidden:
-            self._radios["original"].blockSignals(True)
-            self._radios["original"].setChecked(True)
-            self._radios["original"].blockSignals(False)
-            self.changed.emit("original")
+        before = self.get_filter()
+        self._hidden = set(hidden)
+        self._rebuild()
+        if self.get_filter() != before:      # active filter was hidden → reset
+            self.changed.emit(self.get_filter())
 
-        for key, rb in self._radios.items():
-            rb.setVisible(key not in hidden)
-
-        any_auto_visible = any(key not in hidden for key, _ in self._AUTO_FILTERS)
-        self._auto_sep.setVisible(any_auto_visible)
+    def set_filter(self, key: str) -> None:
+        """Select a filter by key WITHOUT emitting `changed` (for state restore)."""
+        idx = self._combo.findData(key)
+        if idx < 0:
+            idx = self._combo.findData("original")
+        self._combo.blockSignals(True)
+        self._combo.setCurrentIndex(idx)
+        self._combo.blockSignals(False)
 
     def reset(self) -> None:
-        self._radios["original"].blockSignals(True)
-        self._radios["original"].setChecked(True)
-        self._radios["original"].blockSignals(False)
+        self._combo.blockSignals(True)
+        self._combo.setCurrentIndex(self._combo.findData("original"))
+        self._combo.blockSignals(False)
         self.changed.emit("original")
+
+    # -- keyboard cycling (Up/Down in edit mode) ---------------------------
+
+    def select_next(self) -> None:
+        self._step(+1)
+
+    def select_prev(self) -> None:
+        self._step(-1)
+
+    def _step(self, delta: int) -> None:
+        n = self._combo.count()
+        if n == 0:
+            return
+        i = self._combo.currentIndex()
+        for _ in range(n):                    # skip separators (itemData is None)
+            i = (i + delta) % n
+            if self._combo.itemData(i) is not None:
+                self._combo.setCurrentIndex(i)
+                return
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +813,10 @@ class EditPanel(QWidget):
         self._preview_img: np.ndarray | None = None  # downscaled for live preview
         self._preview_scale: float = 1.0
         self._state = EditState()
+        self._session: commands.Session | None = None   # registry view over base+state
         self._crop_active = False
+        self._comparing = False                          # press-and-hold before/after
+        self._copied_look: dict | None = None            # copy/paste edits across photos
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
@@ -775,6 +837,7 @@ class EditPanel(QWidget):
             self._ai_backend = "ollama" if _ai.ollama_is_running(self._ollama_host) else "none"
 
         self._build_ui()
+        self._toast = AgentToast(self)
 
         from config import Config
         cfg = Config.load()
@@ -790,6 +853,7 @@ class EditPanel(QWidget):
         self._original = original_img
         self._preview_img, self._preview_scale = _downscale_for_preview(original_img)
         self._state = EditState()
+        self._session = commands.Session(base=self._original, state=self._state)
         self._crop_active = False
 
         self._adjustments.reset()
@@ -800,6 +864,12 @@ class EditPanel(QWidget):
         self._ai_pre_state = None
         self._ai_status.setText("")
         self._ai_undo_btn.hide()
+        self._comparing = False
+        # The reset() calls above can emit change signals; a fresh photo starts
+        # with an empty history regardless.
+        self._session._undo.clear()
+        self._session._redo.clear()
+        self._update_history_buttons()
 
         self._do_update()
 
@@ -858,6 +928,24 @@ class EditPanel(QWidget):
         rot_r_btn.setToolTip(tr("tooltip_rotate_right"))
         rot_r_btn.clicked.connect(self._rotate_right)
 
+        # Edit-mode undo / redo (Session history: discrete edits, one per drag)
+        self._undo_btn = QPushButton(tr("edit_undo_btn"))
+        self._undo_btn.setStyleSheet(_SMALL_BTN)
+        self._undo_btn.setToolTip(tr("tooltip_edit_undo"))
+        self._undo_btn.clicked.connect(self._edit_undo)
+
+        self._redo_btn = QPushButton(tr("edit_redo_btn"))
+        self._redo_btn.setStyleSheet(_SMALL_BTN)
+        self._redo_btn.setToolTip(tr("tooltip_edit_redo"))
+        self._redo_btn.clicked.connect(self._edit_redo)
+
+        # Press-and-hold "Before" — show the untouched original while held
+        self._compare_btn = QPushButton(tr("compare_btn"))
+        self._compare_btn.setStyleSheet(_SMALL_BTN)
+        self._compare_btn.setToolTip(tr("tooltip_compare"))
+        self._compare_btn.pressed.connect(lambda: self._set_compare(True))
+        self._compare_btn.released.connect(lambda: self._set_compare(False))
+
         save_btn = QPushButton(tr("save_as_btn"))
         save_btn.setStyleSheet(_BTN_STYLE)
         save_btn.clicked.connect(self._do_save)
@@ -866,6 +954,12 @@ class EditPanel(QWidget):
         hl.addSpacing(12)
         hl.addWidget(self._filename_lbl)
         hl.addStretch()
+        hl.addWidget(self._undo_btn)
+        hl.addSpacing(2)
+        hl.addWidget(self._redo_btn)
+        hl.addSpacing(8)
+        hl.addWidget(self._compare_btn)
+        hl.addSpacing(8)
         hl.addWidget(rot_l_btn)
         hl.addSpacing(4)
         hl.addWidget(rot_r_btn)
@@ -923,6 +1017,9 @@ class EditPanel(QWidget):
         self._adjustments = AdjustmentsPanel()
         adj_layout.addWidget(self._adjustments)
         self._adjustments.changed.connect(self._on_state_changed)
+        # Snapshot state at the START of a drag so one drag = one undo step.
+        for _s in self._adjustments._sliders.values():
+            _s.sliderPressed.connect(self._push_edit_history)
 
         filt_box = QGroupBox(tr("filters_title"))
         filt_box.setStyleSheet(adj_box.styleSheet())
@@ -1003,6 +1100,31 @@ class EditPanel(QWidget):
         ai_layout.addWidget(ai_btn_row)
         ai_layout.addWidget(self._ai_status)
 
+        # Copy / paste "look" (adjustments + filter) across photos
+        look_row = QWidget()
+        look_layout = QHBoxLayout(look_row)
+        look_layout.setContentsMargins(8, 8, 8, 0)
+        look_layout.setSpacing(6)
+        self._copy_look_btn = QPushButton(tr("copy_look_btn"))
+        self._copy_look_btn.setStyleSheet(_SMALL_BTN)
+        self._copy_look_btn.setToolTip(tr("tooltip_copy_look"))
+        self._copy_look_btn.clicked.connect(self._copy_look)
+        self._paste_look_btn = QPushButton(tr("paste_look_btn"))
+        self._paste_look_btn.setStyleSheet(_SMALL_BTN)
+        self._paste_look_btn.setToolTip(tr("tooltip_paste_look"))
+        self._paste_look_btn.clicked.connect(self._paste_look)
+        self._paste_look_btn.setEnabled(False)           # nothing copied yet
+        self._album_look_btn = QPushButton(tr("look_batch_btn"))
+        self._album_look_btn.setStyleSheet(_SMALL_BTN)
+        self._album_look_btn.setToolTip(tr("tooltip_look_batch"))
+        self._album_look_btn.clicked.connect(self._apply_look_to_album)
+        self._album_look_btn.setEnabled(False)
+        look_layout.addWidget(self._copy_look_btn)
+        look_layout.addWidget(self._paste_look_btn)
+        look_layout.addWidget(self._album_look_btn)
+        look_layout.addStretch()
+
+        rl.addWidget(look_row)
         rl.addWidget(adj_box)
         rl.addWidget(filt_box)
         rl.addWidget(ai_box)
@@ -1029,16 +1151,204 @@ class EditPanel(QWidget):
         self._debounce.start()
 
     def _on_filter_changed(self, name: str) -> None:
+        self._push_edit_history()
         self._state.filter_name = name
         self._debounce.start()
 
     def _rotate_left(self) -> None:
-        self._state.rotation = (self._state.rotation - 90) % 360
-        self._debounce.start()
+        self.apply_command("image.rotate", {"direction": "ccw"})
 
     def _rotate_right(self) -> None:
-        self._state.rotation = (self._state.rotation + 90) % 360
-        self._debounce.start()
+        self.apply_command("image.rotate", {"direction": "cw"})
+
+    # ------------------------------------------------------------------
+    # Command registry integration (shared by the GUI and the control bridge)
+    # ------------------------------------------------------------------
+
+    def registry_session(self) -> commands.Session | None:
+        """The live Session the registry edits (shares this panel's base + state)."""
+        if self._original is None:
+            return None
+        if self._session is None:
+            self._session = commands.Session(base=self._original, state=self._state)
+        self._session.base = self._original
+        self._session.state = self._state
+        return self._session
+
+    def apply_command(self, cmd_id: str, params: dict | None = None) -> dict:
+        """Run a registry command, then mirror the new state back into the widgets.
+
+        Live slider drags still write state directly (they must not journal per
+        tick); discrete actions — rotate here, plus anything an agent sends over
+        the bridge — flow through the registry so there is one code path.
+        """
+        session = self.registry_session()
+        if session is None:
+            return {"ok": False, "error": "no image"}
+        res = commands.run_command(session, cmd_id, params)
+        if res.get("ok"):
+            self._state = session.state            # pick up replacements (e.g. reset)
+            self._sync_widgets_from_state()        # also re-renders via _on_state_changed
+            self._update_history_buttons()
+        return res
+
+    def _sync_widgets_from_state(self) -> None:
+        st = self._state
+        self._apply_state_dict({
+            "brightness": st.brightness, "contrast": st.contrast,
+            "exposure": float(st.exposure), "saturation": st.saturation,
+            "shadows": st.shadows, "highlights": st.highlights,
+            "filter_name": st.filter_name, "rotation": st.rotation,
+        })
+
+    def note_agent_action(self, text: str) -> None:
+        """Flash a toast when the agent bridge changes the live edit session."""
+        self._toast.show_message(text)
+
+    # ------------------------------------------------------------------
+    # Command palette (Ctrl+K)
+    # ------------------------------------------------------------------
+
+    def _open_command_palette(self) -> None:
+        session = self.registry_session()
+        if session is None:
+            return
+        entries = commands.command_list(session)
+        CommandPalette(self, entries, on_choose=self._run_palette_command).exec()
+
+    def _run_palette_command(self, cmd_id: str) -> None:
+        spec = commands.REGISTRY.get(cmd_id)
+        if spec is None:
+            return
+        params = params_dialog(self, spec)              # {} when no params, None if cancelled
+        if params is None:
+            return
+        self.apply_command(cmd_id, params)
+
+    # ------------------------------------------------------------------
+    # Press-and-hold before/after
+    # ------------------------------------------------------------------
+
+    def _set_compare(self, on: bool) -> None:
+        """While held, show the untouched original; on release, the edited image."""
+        if self._preview_img is None:
+            return
+        self._comparing = on
+        if on:
+            self._preview.set_array(self._preview_img)   # the true original (downscaled)
+        else:
+            self._do_update()
+
+    # ------------------------------------------------------------------
+    # Edit-mode history (undo / redo over the Session; one step per edit)
+    # ------------------------------------------------------------------
+
+    def _push_edit_history(self) -> None:
+        session = self.registry_session()
+        if session is not None:
+            session.push_history()                       # snapshots current state, clears redo
+            self._update_history_buttons()
+
+    def _edit_undo(self) -> None:
+        session = self.registry_session()
+        if session is not None and session.undo():
+            self._state = session.state
+            self._sync_widgets_from_state()
+            self._update_history_buttons()
+
+    def _edit_redo(self) -> None:
+        session = self.registry_session()
+        if session is not None and session.redo():
+            self._state = session.state
+            self._sync_widgets_from_state()
+            self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        session = self._session
+        self._undo_btn.setEnabled(bool(session and session._undo))
+        self._redo_btn.setEnabled(bool(session and session._redo))
+
+    # ------------------------------------------------------------------
+    # Copy / paste "look" (adjustments + filter) across photos
+    # ------------------------------------------------------------------
+
+    def _copy_look(self) -> None:
+        """Remember this photo's tone adjustments and filter for pasting elsewhere.
+
+        Framing (crop and rotation) is intentionally left out — it is specific to
+        each photo, while the tonal "look" is what you want to stamp onto a set.
+        """
+        look = self._adjustments.get_values()            # exposure in stops (float)
+        look["filter_name"] = self._state.filter_name
+        self._copied_look = look
+        self._paste_look_btn.setEnabled(True)
+        self._album_look_btn.setEnabled(True)
+        self._toast.show_message(tr("look_copied"), icon="⧉")
+
+    def _look_to_state(self) -> EditState:
+        """Build an EditState from the copied look (tones + filter only).
+
+        Framing is deliberately omitted — a batch applies a consistent *look*,
+        not one photo's crop or rotation.
+        """
+        look = self._copied_look or {}
+        return EditState(
+            brightness=float(look.get("brightness", 0)),
+            contrast=float(look.get("contrast", 0)),
+            exposure=float(look.get("exposure", 0)),     # stops
+            saturation=float(look.get("saturation", 0)),
+            shadows=float(look.get("shadows", 0)),
+            highlights=float(look.get("highlights", 0)),
+            filter_name=str(look.get("filter_name", "original")),
+            rotation=0,
+        )
+
+    def _apply_look_to_album(self) -> None:
+        """Apply the copied look to every album photo, writing edited copies.
+
+        Hard-to-undo (it writes many files), so it confirms first and never
+        overwrites the originals — copies go into an `_edited` subfolder.
+        """
+        if self._copied_look is None:
+            return
+        album = self.controller.album
+        n = len(album.entries)
+        if not album.path or n == 0:
+            QMessageBox.information(self, tr("look_batch_title"), tr("look_batch_empty"))
+            return
+        out_dir = Path(album.path) / "_edited"
+        resp = QMessageBox.question(
+            self, tr("look_batch_title"),
+            tr("look_batch_confirm").format(count=n, dir=out_dir),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        state = self._look_to_state()
+        self.setCursor(Qt.CursorShape.WaitCursor)
+        try:
+            saved, failed, errors = self.controller.apply_look_to_album(state, out_dir)
+        finally:
+            self.unsetCursor()
+
+        msg = tr("look_batch_done").format(saved=saved, dir=out_dir)
+        if failed:
+            msg += tr("look_batch_failed").format(failed=failed)
+            if errors:
+                msg += "\n" + "\n".join(errors[:5])
+        QMessageBox.information(self, tr("look_batch_title"), msg)
+
+    def _paste_look(self) -> None:
+        if self._copied_look is None:
+            return
+        self._push_edit_history()                        # so paste is a single undo step
+        state = dict(self._copied_look)
+        state["rotation"] = self._state.rotation         # keep this photo's framing
+        self._apply_state_dict(state)                    # pushes tones+filter into widgets
+        self._update_history_buttons()
+        self._toast.show_message(tr("look_pasted"), icon="⤷")
 
     def _selected_crop_aspect(self) -> float:
         """Desired crop aspect (pixel w/h) for the current combo selection."""
@@ -1069,12 +1379,15 @@ class EditPanel(QWidget):
         self._on_crop_confirmed(ol._nx, ol._ny, ol._nw, ol._nh)
 
     def _on_crop_confirmed(self, nx: float, ny: float, nw: float, nh: float) -> None:
+        self._push_edit_history()
         self._state.crop_rect = (nx, ny, nw, nh)
         self._crop_btn.setChecked(False)   # also hides _apply_crop_btn via toggled signal
         self._debounce.start()
+        self._update_history_buttons()
 
     def _on_manage_filters(self) -> None:
         dlg = FilterManagerDialog(
+            FiltersPanel._CAMERA_FILTERS,
             FiltersPanel._FILM_FILTERS,
             FiltersPanel._AUTO_FILTERS,
             self._filters.get_hidden(),
@@ -1128,10 +1441,7 @@ class EditPanel(QWidget):
             slider.blockSignals(False)
 
         fname = state.get("filter_name", "original")
-        if fname in self._filters._radios:
-            self._filters._radios[fname].blockSignals(True)
-            self._filters._radios[fname].setChecked(True)
-            self._filters._radios[fname].blockSignals(False)
+        self._filters.set_filter(fname)
         self._state.filter_name = fname
         self._state.rotation = state.get("rotation", 0)
         self._on_state_changed()
@@ -1225,9 +1535,32 @@ class EditPanel(QWidget):
     def keyPressEvent(self, event) -> None:
         mods = event.modifiers()
         key = event.key()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         if key == Qt.Key.Key_Escape:
             self._on_back()
-        elif key == Qt.Key.Key_S and mods & Qt.KeyboardModifier.ControlModifier:
+        elif key == Qt.Key.Key_K and ctrl:
+            self._open_command_palette()
+        elif key == Qt.Key.Key_S and ctrl:
             self._do_save()
+        elif key == Qt.Key.Key_Z and ctrl and shift:
+            self._edit_redo()
+        elif key == Qt.Key.Key_Z and ctrl:
+            self._edit_undo()
+        elif key in (Qt.Key.Key_Y,) and ctrl:
+            self._edit_redo()
+        elif key == Qt.Key.Key_Backslash:
+            if not event.isAutoRepeat():      # hold \ to peek at the original
+                self._set_compare(True)
+        elif key == Qt.Key.Key_Down:
+            self._filters.select_next()   # cycle the filter dropdown, preview updates
+        elif key == Qt.Key.Key_Up:
+            self._filters.select_prev()
         else:
             super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Backslash and not event.isAutoRepeat():
+            self._set_compare(False)
+        else:
+            super().keyReleaseEvent(event)

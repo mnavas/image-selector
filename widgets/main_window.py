@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtCore import Qt, QEvent
-from PyQt6.QtGui import QActionGroup
+from PyQt6.QtGui import QAction, QActionGroup
+
+import commands
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -67,9 +69,36 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self.setStyleSheet("background-color: #111111; color: #dddddd;")
 
+        self._editing = False
         self._build_ui()
         controller.set_window(self)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        self._control = None
+        self._maybe_start_control_server()
+
+    def _maybe_start_control_server(self):
+        """Start the loopback control bridge if IMAGE_SELECTOR_CONTROL is set.
+
+        Value "1" picks a free port; a number binds it. Port+token are written to
+        ~/.cache/image-selector/control.json for `mcp_server.py --bridge`.
+        """
+        import os
+        val = os.environ.get("IMAGE_SELECTOR_CONTROL")
+        if not val:
+            return
+        try:
+            from control_server import ControlServer
+            port = int(val) if val.isdigit() else 0
+            self._control = ControlServer(self._edit_panel, port=port)
+            print(f"[image-selector] control server on 127.0.0.1:{self._control.port}")
+        except Exception as e:
+            print(f"[image-selector] control server failed to start: {e}")
+
+    def closeEvent(self, event):
+        if self._control is not None:
+            self._control.close()
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Public interface used by AppController
@@ -84,6 +113,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def show_edit_panel(self, entry: ImageEntry, img: np.ndarray) -> None:
+        self._editing = True
         self._edit_panel.load(entry, img)
         self._edit_panel.setGeometry(self.centralWidget().rect())
         self._edit_panel.show()
@@ -92,6 +122,7 @@ class MainWindow(QMainWindow):
         self._edit_panel.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def hide_edit_panel(self) -> None:
+        self._editing = False
         self._edit_panel.hide()
         self.setFocus()
 
@@ -315,6 +346,54 @@ class MainWindow(QMainWindow):
 
         lang_menu = file_menu.addMenu(tr("menu_language"))
         self._populate_language_menu(lang_menu)
+
+        self._build_edit_menus(mb)
+
+    def _build_edit_menus(self, mb) -> None:
+        """Generate edit-mode menus straight from the command registry (parity
+        with image-editor's menu bar).
+
+        The items act on the live edit session and are enabled only while a photo
+        is open in Edit mode. Labels/placement come from each CommandSpec — the
+        same table the palette, MCP server and bridge use — so a new command shows
+        up here automatically. Running an item routes through the edit panel's
+        palette runner (params dialog + apply_command).
+        """
+        self._edit_menu_actions: list = []               # [(QAction, spec)]
+        order = ["Edit", "Image"]
+        groups: dict[str, list] = {}
+        for spec in commands.REGISTRY.values():
+            if not spec.menu:                            # queries etc. aren't menu items
+                continue
+            groups.setdefault(spec.menu[0], []).append(spec)
+        for name in order + [g for g in groups if g not in order]:
+            specs = groups.get(name)
+            if not specs:
+                continue
+            menu = mb.addMenu(name)
+            menu.setToolTipsVisible(True)                # show disabled reasons
+            for spec in specs:
+                act = QAction(spec.label, self)
+                act.triggered.connect(
+                    lambda _checked=False, cid=spec.id: self._run_edit_command(cid))
+                menu.addAction(act)
+                self._edit_menu_actions.append((act, spec))
+            menu.aboutToShow.connect(self._sync_edit_menu)
+        self._sync_edit_menu()
+
+    def _sync_edit_menu(self) -> None:
+        panel = getattr(self, "_edit_panel", None)       # may not exist yet at build time
+        session = panel.registry_session() if (self._editing and panel) else None
+        for act, spec in self._edit_menu_actions:
+            ok = session is not None and spec.enabled(session)
+            act.setEnabled(ok)
+            act.setToolTip("" if ok else (
+                "open a photo in Edit mode" if session is None
+                else spec.disabled_reason(session)))
+
+    def _run_edit_command(self, cmd_id: str) -> None:
+        if self._editing and getattr(self, "_edit_panel", None) is not None:
+            self._edit_panel._run_palette_command(cmd_id)
 
     def _populate_language_menu(self, menu) -> None:
         group = QActionGroup(self)

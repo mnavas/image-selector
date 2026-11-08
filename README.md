@@ -17,6 +17,8 @@ A keyboard-driven desktop tool for triaging and organizing photos. Load a source
 - **Multi-language interface** — English, Español, Português, and Deutsch. Auto-detected from the system locale on first launch; switchable anytime from the 🌐 button next to the folder controls
 - **Edit mode** — enter with `E`, full-screen non-destructive editor with live preview
   - Colour adjustments: Brightness, Contrast, Exposure, Saturation, Shadows, Highlights
+  - **Filters as a dropdown** — pick a look from one menu; in edit mode press **↑ / ↓ to cycle through filters** and watch the live preview change
+  - **10 camera picture profiles**: Standard, Vivid, Neutral, Faithful, Flat/Log, Landscape, Portrait, Monochrome, plus High/Low Contrast presets
   - **20 Fujifilm-inspired film simulations**: Provia, Velvia, Astia, Classic Chrome, Classic Neg, Acros, Eterna, Sepia, Faded/Matte, Cross Process, Fortia SP, Neopan 1600, T64, Pro 800Z, Pro 400H, Pro 160C, Pro 160S, Superia 1600, Superia 400, Superia 100
   - **Auto adjustments**: Normalize (CLAHE), Auto Levels, Auto Tone, Auto White Balance
   - **Filter visibility manager** — hide filters you never use via the ⚙ Manage button; preference is remembered between sessions
@@ -57,6 +59,7 @@ A keyboard-driven desktop tool for triaging and organizing photos. Load a source
 | Key | Action |
 |-----|--------|
 | `Ctrl+S` | Save As |
+| `↑` / `↓` | Previous / next filter (live preview) |
 | `Esc` | Back to triage (discard edits) |
 | `Enter` | Confirm crop (when crop tool is active) |
 | `Esc` | Cancel crop (when crop tool is active) |
@@ -112,6 +115,13 @@ image_selector/
 - HEIC support (`pillow-heif`), RAW support (`rawpy`), batch editing
 
 ## Changelog
+
+### v1.2.0
+
+**New features**
+
+- **Camera picture profiles** — Standard, Vivid, Neutral, Faithful, Flat/Log, Landscape, Portrait, Monochrome, plus High/Low Contrast tone presets, alongside the 20 film simulations.
+- **Filters are now a dropdown** instead of a long radio list — and in edit mode you can press **↑ / ↓ to cycle through every filter** with the live preview updating, so you can compare looks quickly without the mouse. (Arrow keys keep triage move-to-album/library behaviour outside edit mode.) Hidden-filter management and the AI-edit filter list include the new profiles too.
 
 ### v1.1.0
 

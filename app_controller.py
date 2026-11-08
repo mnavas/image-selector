@@ -206,6 +206,41 @@ class AppController:
         self.close_edit_mode()
         self._refresh_collections()
 
+    def apply_look_to_album(self, state: EditState, out_dir: Path) -> tuple[int, int, list[str]]:
+        """Apply `state` to every album photo, writing edited COPIES into out_dir.
+
+        Originals are never modified; each output is written atomically (temp file
+        + move) and an output that would land on top of an original is skipped, so
+        the source set is safe even if out_dir is the album folder itself. Returns
+        (saved, failed, failure_messages).
+        """
+        import shutil
+        import tempfile
+
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved, failed, errors = 0, 0, []
+        for entry in list(self.album.entries):
+            target = out_dir / entry.filename
+            try:
+                if target.resolve() == entry.path.resolve():
+                    raise RuntimeError("would overwrite the original — skipped")
+                img = img_io.imread(entry.path)
+                if img is None:
+                    raise RuntimeError("could not read the image")
+                out = apply_pipeline(img, state)
+                tmp_fd, tmp_name = tempfile.mkstemp(suffix=entry.path.suffix, dir=out_dir)
+                os.close(tmp_fd)
+                if not img_io.imwrite(Path(tmp_name), out):
+                    Path(tmp_name).unlink(missing_ok=True)
+                    raise RuntimeError("could not encode the image")
+                shutil.move(tmp_name, str(target))
+                saved += 1
+            except Exception as exc:
+                failed += 1
+                errors.append(f"{entry.filename}: {exc}")
+        return saved, failed, errors
+
     def quick_rotate(self) -> None:
         """Rotate current image 90° CW and save in-place immediately."""
         if self._window is None:

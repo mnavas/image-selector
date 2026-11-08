@@ -43,6 +43,16 @@ no explanation, no code fences — that matches this schema exactly:
 
 Valid filter_name values:
   "original"     — no film simulation
+  "standard"     — camera Standard: mild contrast, slight colour boost
+  "vivid"        — camera Vivid: punchy contrast, high saturation
+  "neutral"      — camera Neutral: low contrast, restrained colour
+  "faithful"     — camera Faithful: accurate colour, near-linear
+  "flat"         — camera Flat/Log: lifted blacks, muted, for grading
+  "landscape"    — camera Landscape: strong contrast, vivid greens/blues
+  "portrait"     — camera Portrait: gentle contrast, warm skin
+  "monochrome"   — camera Monochrome: black-and-white
+  "high_contrast"— strong contrast tone preset
+  "low_contrast" — low contrast tone preset (lifted blacks)
   "provia"       — slight S-curve, neutral colours
   "velvia"       — punchy contrast, high saturation, warm
   "astia"        — lifted shadows, gentle contrast, natural skin
@@ -83,6 +93,8 @@ Rules:
 # ---------------------------------------------------------------------------
 
 _VALID_FILTERS = {
+    "standard", "vivid", "neutral", "faithful", "flat", "landscape",
+    "portrait", "monochrome", "high_contrast", "low_contrast",
     "original", "provia", "velvia", "astia", "classic_chrome", "classic_neg",
     "acros", "eterna", "sepia", "faded", "cross_process", "fortia_sp",
     "neopan_1600", "t64", "pro_800z", "pro_400h", "pro_160c", "pro_160s",
